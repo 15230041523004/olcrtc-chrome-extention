@@ -1,0 +1,18 @@
+{
+  "name": "rust-tls-wasm",
+  "type": "module",
+  "collaborators": [
+    "EithonX"
+  ],
+  "version": "0.1.1",
+  "files": [
+    "rust_tls_wasm_bg.wasm",
+    "rust_tls_wasm.js",
+    "rust_tls_wasm.d.ts"
+  ],
+  "main": "rust_tls_wasm.js",
+  "types": "rust_tls_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

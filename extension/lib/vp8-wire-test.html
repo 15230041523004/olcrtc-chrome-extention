@@ -1,0 +1,54 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>vp8-wire self-test</title>
+<pre id="out"></pre>
+<script type="module">
+  import {
+    parseEpochHeader,
+    epochCrc,
+    crc32Ieee,
+    bindingToken,
+    hexU32,
+  } from './vp8-wire.js';
+
+  const out = document.getElementById('out');
+  const lines = [];
+  function log(s) { lines.push(s); out.textContent = lines.join('\n'); }
+
+  function hexToBytes(hex) {
+    const h = hex.replace(/#.*$/gm, '').replace(/\s+/g, '');
+    const u8 = new Uint8Array(h.length / 2);
+    for (let i = 0; i < u8.length; i++) u8[i] = parseInt(h.substr(i * 2, 2), 16);
+    return u8;
+  }
+
+  let failed = 0;
+  function assert(cond, msg) {
+    if (!cond) { failed++; log('FAIL ' + msg); }
+    else log('ok   ' + msg);
+  }
+
+  const crcVec = new TextEncoder().encode('123456789');
+  assert(crc32Ieee(crcVec) === 0xcbf43926, 'CRC32("123456789") = 0xCBF43926');
+
+  const ka = hexToBytes('3001009d012a10001000004708858588998488fc2409c6c566fe81a8000000002b20db1e');
+  const pKa = parseEpochHeader(ka);
+  assert(pKa && pKa.ok, 'keepalive crc ok');
+  assert(pKa.token === 0x2409c6c5, 'keepalive token');
+  assert(pKa.src === 0x66fe81a8, 'keepalive src');
+  assert(pKa.dst === 0, 'keepalive dst=0');
+  assert(pKa.crc === 0x2b20db1e, 'keepalive crc value');
+  assert(epochCrc(pKa.token, pKa.src, pKa.dst) === 0x2b20db1e, 'epochCrc keepalive');
+
+  const dh = hexToBytes('3001009d012a10001000004708858588998488fc2409c6c566fe81a81459fb8e6a7e98b8');
+  const pDh = parseEpochHeader(dh);
+  assert(pDh && pDh.ok, 'data header crc ok');
+  assert(pDh.dst === 0x1459fb8e, 'data dst other-cnc');
+  assert(pDh.crc === 0x6a7e98b8, 'data crc value');
+
+  assert(bindingToken('', '80374510690850') === 0x2409c6c5, 'FNV bare room.id = live token');
+  assert(bindingToken('', 'https://telemost.yandex.ru/j/80374510690850') === 0x779bf6c3, 'FNV full URL (mismatch)');
+
+  log(failed ? `\n${failed} FAILED` : '\nall passed');
+  log(`live token ${hexU32(0x2409c6c5)}`);
+</script>

@@ -1,0 +1,13 @@
+Vendored TLS 1.3 client (Rustls compiled to WebAssembly).
+
+Prebuilt `rust_tls_wasm*.{js,wasm}` and this directory's LICENSE (GPL-3.0)
+come from socksflare 0.4.0 (https://github.com/EithonX/socksflare),
+wrapper by EithonX. Combined with this AGPL-3.0 project under GPL-3 §13.
+
+Corresponding source to rebuild the wasm lives in `tls-wasm/` at the
+repository root (Rustls 0.23 + webpki-roots + ring). Rebuild:
+
+    node scripts/build-tls-wasm.mjs
+
+Rustls, ring, and webpki-roots keep their upstream licenses (Apache-2.0 /
+ISC / MIT / CDLA-Permissive-2.0).

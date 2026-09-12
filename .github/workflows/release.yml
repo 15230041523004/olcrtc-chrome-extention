@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - run: npm run pack
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+            --title "olcRTC Research $GITHUB_REF_NAME" \
+            --notes "First packaged Chrome extension for this research prototype.
+
+          Unzip olcrtc-chrome-extension-*.zip and load the folder that contains manifest.json via chrome://extensions (Developer mode → Load unpacked).
+
+          This is experimental research software (PoC). It is not a VPN, not a public proxy, and not a circumvention tool."

@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>olcRTC channel</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>olcRTC <span>Tunnel</span></h1>
+      <p class="sub">telemost · vp8channel · http(s) intercept · research prototype</p>
+    </header>
+
+    <div class="uri-container" id="uri-container">
+      <div class="uri-header">
+        <label for="uri">Connection URI</label>
+        <span class="uri-toggle-hint" id="uri-toggle-hint">click to edit</span>
+      </div>
+      <div class="uri-preview" id="uri-preview" tabindex="0" role="button" title="Click to expand and edit full URI">
+        <span class="uri-tag">ROOM</span>
+        <span class="uri-room-text" id="uri-room-text">No room set (click to edit)</span>
+        <span class="uri-action-icon">✏️</span>
+      </div>
+      <div class="uri-editor" id="uri-editor">
+        <textarea id="uri" rows="3" spellcheck="false" placeholder="olcrtc://telemost?vp8channel@ROOM#KEY"></textarea>
+        <div class="uri-editor-actions">
+          <span class="uri-editor-tip">Paste full olcrtc:// URI</span>
+          <button id="uri-done-btn" type="button" class="uri-done-btn">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row main-actions">
+      <button id="connect" type="button">Connect</button>
+      <button id="disconnect" type="button" class="ghost">Disconnect</button>
+    </div>
+
+    <div class="status-card" id="status-card">
+      <div class="status-header" id="status-header" title="Click to view detailed status and stages">
+        <div class="status-header-left">
+          <span class="status-pill idle" id="status-pill">idle</span>
+          <span class="status-summary" id="status-summary"></span>
+        </div>
+        <div class="status-blocks" id="status-blocks" title="Connection stage progress (13 stages)"></div>
+        <span class="status-chevron">▾</span>
+      </div>
+      <div class="status-accordion" id="status-accordion">
+        <div id="status" class="status idle">idle</div>
+        <ul id="flags" class="flags"></ul>
+      </div>
+    </div>
+
+    <div class="settings-card" id="settings-card">
+      <div class="settings-header">
+        <span class="settings-title">Settings</span>
+        <span class="settings-hint">isolation matches tunnel exit</span>
+      </div>
+      <p class="settings-exit" id="settings-exit">Exit: waiting for handshake</p>
+      <button id="recheck-exit" type="button" class="ghost" disabled>Check exit through tunnel</button>
+      <p class="settings-exit" id="network-guard">Direct traffic protection: off</p>
+      <div class="settings-row">
+        <label class="spoof-label locked" title="Always on while intercept is attached">
+          <input id="spoof-geo" type="checkbox" checked disabled />
+          <span>Geo &amp; timezone</span>
+        </label>
+        <span class="settings-lock">always on</span>
+      </div>
+      <div class="settings-row">
+        <label class="spoof-label">
+          <input id="spoof-language" type="checkbox" checked />
+          <span>Language / locale</span>
+        </label>
+        <select id="spoof-locale" title="Locale">
+          <option value="auto">auto from exit</option>
+          <option value="en-US">en-US</option>
+          <option value="en-GB">en-GB</option>
+          <option value="ru-RU">ru-RU</option>
+          <option value="nl-NL">nl-NL</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <label class="spoof-label">
+          <input id="spoof-ua" type="checkbox" checked />
+          <span>User-Agent</span>
+        </label>
+        <select id="spoof-ua-preset" title="User-Agent preset">
+          <option value="chrome-win">Chrome Windows</option>
+          <option value="chrome-mac">Chrome macOS</option>
+          <option value="chrome-linux">Chrome Linux</option>
+        </select>
+      </div>
+      <div class="settings-row">
+        <label class="spoof-label">
+          <input id="spoof-hw" type="checkbox" checked />
+          <span>hardwareConcurrency</span>
+        </label>
+        <select id="spoof-hw-value" title="hardwareConcurrency">
+          <option value="2">2</option>
+          <option value="4">4</option>
+          <option value="8" selected>8</option>
+          <option value="12">12</option>
+          <option value="16">16</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="debug-card">
+      <label class="check debug-toggle-label" title="Enable when troubleshooting is needed">
+        <input id="debug-toggle" type="checkbox" />
+        <span class="debug-title">Debug &amp; Logs</span>
+        <span id="debug-hint" class="debug-hint">(on for troubleshooting)</span>
+      </label>
+      <div id="debug-accordion" class="debug-accordion">
+        <div class="debug-content">
+          <div class="row">
+            <label class="mode">
+              Transform
+              <select id="mode">
+                <option value="tunnel">tunnel</option>
+                <option value="identity">identity</option>
+                <option value="marker">marker</option>
+              </select>
+            </label>
+            <button id="download-log" type="button" class="ghost">Download log</button>
+          </div>
+          <div id="log-result" role="status"></div>
+          <pre id="events" class="log events"></pre>
+          <pre id="log" class="log"></pre>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <a href="https://github.com/15230041523004/olcrtc-chrome-extention" target="_blank" rel="noreferrer">Source</a>
+      · not a VPN · Chrome 141+
+    </footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

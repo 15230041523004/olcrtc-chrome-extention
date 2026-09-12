@@ -1,0 +1,3 @@
+# Live Telemost vp8channel keepalive (36 bytes). Captured Stage 1 marker inbound n=1.
+# token=0x2409c6c5 src=0x66fe81a8 dst=0 crc=0x2b20db1e
+30 01 00 9d 01 2a 10 00 10 00 00 47 08 85 85 88 99 84 88 fc 24 09 c6 c5 66 fe 81 a8 00 00 00 00 2b 20 db 1e

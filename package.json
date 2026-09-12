@@ -1,0 +1,14 @@
+{
+  "name": "olcrtc-chrome-extension-research",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:chrome": "node scripts/check-chrome.mjs",
+    "test:privacy": "node scripts/check-privacy.mjs",
+    "pack": "node scripts/pack-extension.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

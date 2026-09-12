@@ -1,0 +1,30 @@
+# Local stand secrets — never commit
+local-uri.txt
+*.key
+client.yaml
+server.yaml
+
+# Native frame dumps may contain tunnel bytes
+docs/fixtures/*.bin
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Isolated local browser checks
+.tmp/
+
+# Packed Chrome extension
+dist/
+
+# npm
+node_modules/
+
+# rustls wasm build
+tls-wasm/target/
+tls-wasm/pkg/
+.tmp/

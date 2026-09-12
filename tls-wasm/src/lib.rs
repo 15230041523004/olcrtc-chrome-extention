@@ -1,0 +1,173 @@
+//! Unbuffered Rustls client for the Chrome extension worker.
+//! API matches the vendored socksflare wasm (`WasmTlsClient`) plus
+//! `protocol_version` / `close` for 3c logs and orderly shutdown.
+
+use js_sys::{Array, Uint8Array};
+use rustls::{ClientConfig, ClientConnection, ProtocolVersion, RootCertStore};
+use rustls_pki_types::{CertificateDer, ServerName};
+use std::io::{Cursor, Read, Write};
+use std::sync::{Arc, Once};
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+
+static PROVIDER: Once = Once::new();
+
+fn ensure_provider() {
+    PROVIDER.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
+#[wasm_bindgen]
+pub struct WasmTlsClient {
+    conn: ClientConnection,
+}
+
+#[wasm_bindgen]
+impl WasmTlsClient {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        hostname: &str,
+        alpn_csv: Option<String>,
+        extra_roots: Option<Array>,
+    ) -> Result<WasmTlsClient, JsValue> {
+        ensure_provider();
+        let mut root_store = RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        add_extra_root_certificates(&mut root_store, extra_roots)?;
+
+        let mut config = ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        config.alpn_protocols = parse_alpn_protocols(alpn_csv)?;
+
+        let server_name = ServerName::try_from(hostname.to_string())
+            .map_err(|e| JsValue::from_str(&format!("Invalid hostname: {e}")))?
+            .to_owned();
+
+        let conn = ClientConnection::new(Arc::new(config), server_name)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(WasmTlsClient { conn })
+    }
+
+    /// Feed ciphertext from TCP. Returns bytes consumed (one TLS record).
+    pub fn provide_network_data(&mut self, data: &[u8]) -> Result<usize, JsValue> {
+        let mut cursor = Cursor::new(data);
+        let read = self
+            .conn
+            .read_tls(&mut cursor)
+            .map_err(|e| JsValue::from_str(&format!("Rustls read error: {e}")))?;
+        self.conn
+            .process_new_packets()
+            .map_err(|e| JsValue::from_str(&format!("Rustls process packets error: {e}")))?;
+        Ok(read)
+    }
+
+    pub fn extract_network_data(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
+        let mut buf = Vec::new();
+        while self.conn.wants_write() {
+            self.conn
+                .write_tls(&mut buf)
+                .map_err(|e| JsValue::from_str(&format!("Rustls write_tls error: {e}")))?;
+        }
+        Ok(js_sys::Uint8Array::from(buf.as_slice()))
+    }
+
+    pub fn write_app_data(&mut self, data: &[u8]) -> Result<(), JsValue> {
+        self.conn
+            .writer()
+            .write_all(data)
+            .map_err(|e| JsValue::from_str(&format!("Rustls write_app_data error: {e}")))?;
+        Ok(())
+    }
+
+    pub fn read_app_data(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
+        let mut plaintext = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match self.conn.reader().read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => plaintext.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) => {
+                    return Err(JsValue::from_str(&format!("Rustls read_app_data error: {e}")))
+                }
+            }
+        }
+        Ok(js_sys::Uint8Array::from(plaintext.as_slice()))
+    }
+
+    pub fn is_handshaking(&self) -> bool {
+        self.conn.is_handshaking()
+    }
+
+    pub fn wants_read(&self) -> bool {
+        self.conn.wants_read()
+    }
+
+    pub fn wants_write(&self) -> bool {
+        self.conn.wants_write()
+    }
+
+    #[wasm_bindgen(js_name = negotiatedAlpn)]
+    pub fn negotiated_alpn(&self) -> Option<String> {
+        self.conn
+            .alpn_protocol()
+            .map(|p| String::from_utf8_lossy(p).to_string())
+    }
+
+    #[wasm_bindgen(js_name = protocol_version)]
+    pub fn protocol_version(&self) -> String {
+        match self.conn.protocol_version() {
+            Some(ProtocolVersion::TLSv1_3) => "TLS1.3".into(),
+            Some(ProtocolVersion::TLSv1_2) => "TLS1.2".into(),
+            Some(v) => format!("{v:?}"),
+            None => "unknown".into(),
+        }
+    }
+
+    pub fn close(&mut self) {
+        self.conn.send_close_notify();
+    }
+}
+
+fn parse_alpn_protocols(alpn_csv: Option<String>) -> Result<Vec<Vec<u8>>, JsValue> {
+    let mut parsed = Vec::new();
+    if let Some(csv) = alpn_csv {
+        for proto in csv.split(',') {
+            let p = proto.trim();
+            if p.is_empty() {
+                continue;
+            }
+            if !p.is_ascii() {
+                return Err(JsValue::from_str("ALPN protocol names must be ASCII"));
+            }
+            if p.len() > 255 {
+                return Err(JsValue::from_str("ALPN protocol names must be <= 255 bytes"));
+            }
+            parsed.push(p.as_bytes().to_vec());
+        }
+    }
+    Ok(parsed)
+}
+
+fn add_extra_root_certificates(
+    root_store: &mut RootCertStore,
+    extra_roots: Option<Array>,
+) -> Result<(), JsValue> {
+    let Some(extra_roots) = extra_roots else {
+        return Ok(());
+    };
+    for (index, value) in extra_roots.iter().enumerate() {
+        let bytes = value
+            .dyn_into::<Uint8Array>()
+            .map_err(|_| {
+                JsValue::from_str(&format!("extraRootCertificates[{index}] must be a Uint8Array"))
+            })?
+            .to_vec();
+        root_store.add(CertificateDer::from(bytes)).map_err(|e| {
+            JsValue::from_str(&format!("Invalid extra root certificate at index {index}: {e}"))
+        })?;
+    }
+    Ok(())
+}

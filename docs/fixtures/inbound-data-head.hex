@@ -1,0 +1,4 @@
+# Live Telemost vp8channel data header (36 of 464 bytes). Captured Stage 1 marker inbound n=30.
+# token=0x2409c6c5 src=0x66fe81a8 dst=0x1459fb8e (native cnc epoch) crc=0x6a7e98b8
+# payload after header = 428 bytes (not stored)
+30 01 00 9d 01 2a 10 00 10 00 00 47 08 85 85 88 99 84 88 fc 24 09 c6 c5 66 fe 81 a8 14 59 fb 8e 6a 7e 98 b8
