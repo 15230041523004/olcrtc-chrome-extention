@@ -1,10 +1,9 @@
 {
   "name": "rust-tls-wasm",
   "type": "module",
-  "collaborators": [
-    "EithonX"
-  ],
+  "description": "Rustls TLS 1.2/1.3 client for the olcRTC Chrome extension (wasm-bindgen)",
   "version": "0.1.1",
+  "license": "GPL-3.0-or-later",
   "files": [
     "rust_tls_wasm_bg.wasm",
     "rust_tls_wasm.js",

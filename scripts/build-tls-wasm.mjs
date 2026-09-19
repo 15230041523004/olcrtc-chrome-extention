@@ -12,6 +12,16 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const crate = join(root, 'tls-wasm');
 const out = join(root, 'extension', 'lib', 'vendor', 'tls-wasm');
 
+if (process.platform === 'win32') {
+  const home = process.env.USERPROFILE || '';
+  const extraPaths = [
+    join(home, '.cargo', 'bin'),
+    'C:\\Program Files\\LLVM\\bin',
+    'C:\\Program Files (x86)\\LLVM\\bin',
+  ];
+  process.env.PATH = extraPaths.concat(process.env.PATH || '').join(';');
+}
+
 function run(cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: crate, shell: true, ...opts });
   if (r.status !== 0) process.exit(r.status || 1);

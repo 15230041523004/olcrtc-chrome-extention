@@ -36,7 +36,10 @@ impl WasmTlsClient {
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         add_extra_root_certificates(&mut root_store, extra_roots)?;
 
-        let mut config = ClientConfig::builder()
+        let provider = rustls::crypto::ring::default_provider();
+        let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
+            .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+            .map_err(|e| JsValue::from_str(&format!("TLS config error: {e}")))?
             .with_root_certificates(root_store)
             .with_no_client_auth();
         config.alpn_protocols = parse_alpn_protocols(alpn_csv)?;

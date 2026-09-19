@@ -1345,11 +1345,23 @@ function debuggee(id) {
   return typeof id === 'object' ? id : { tabId: id };
 }
 
+function targetLabel(id) {
+  if (typeof id === 'number' || typeof id === 'string') return `tab=${id}`;
+  if (id && typeof id === 'object') {
+    if (id.targetId) return `target=${id.targetId.slice(0, 8)}`;
+    if (id.tabId) return `tab=${id.tabId}`;
+  }
+  return `tab=${id}`;
+}
+
 async function cdpTry(id, method, params) {
   try {
     return await chrome.debugger.sendCommand(debuggee(id), method, params);
   } catch (err) {
-    onLog(`spoof.${method} tab=${id}: ${err.message}`);
+    if (method === 'Emulation.setLocaleOverride' && err.message?.includes('Another locale override')) {
+      return null;
+    }
+    onLog(`spoof.${method} ${targetLabel(id)}: ${err.message}`);
     return null;
   }
 }
@@ -1401,10 +1413,10 @@ async function applySpoof(id, prevScriptId, hasPage = true) {
     try {
       await chrome.debugger.sendCommand(debuggee(id), 'Runtime.evaluate', { expression: source });
     } catch {}
-    onLog(`spoof.apply tab=${id} tz=${profile.timezoneId} locale=${profile.spoofLanguage ? profile.locale : 'off'}`);
+    onLog(`spoof.apply ${targetLabel(id)} tz=${profile.timezoneId} locale=${profile.spoofLanguage ? profile.locale : 'off'}`);
     return scriptId;
   } catch (err) {
-    onLog(`spoof.apply error tab=${id}: ${err.message}`);
+    onLog(`spoof.apply error ${targetLabel(id)}: ${err.message}`);
     return null;
   }
 }
