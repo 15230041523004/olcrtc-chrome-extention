@@ -54,7 +54,7 @@
 * Развернутый серверный исследовательский узел `olcrtc srv` (протокол `telemost + vp8channel`).
 
 ### Установка из GitHub Releases
-1. Скачайте `olcrtc-chrome-extension-0.5.2.zip` со страницы [Releases](https://github.com/15230041523004/olcrtc-chrome-extention/releases).
+1. Скачайте `olcrtc-chrome-extension-0.1.0.zip` со страницы [Releases](https://github.com/15230041523004/olcrtc-chrome-extention/releases).
 2. Распакуйте архив.
 3. Откройте `chrome://extensions`.
 4. Включите **«Режим разработчика»** (Developer mode).
