@@ -3,6 +3,8 @@ import { FALLBACK_GEO_PROFILE, normalizeGeoProfile } from './geo-spoof.js';
 export const LOCALES = Object.freeze(['auto', 'en-US', 'en-GB', 'ru-RU', 'nl-NL']);
 export const UA_PRESETS = Object.freeze(['chrome-win', 'chrome-mac', 'chrome-linux']);
 export const HW_VALUES = Object.freeze([2, 4, 8, 12, 16]);
+export const SCREEN_PRESETS = Object.freeze(['1920x1080', '2560x1440', '1920x1200', '1366x768']);
+export const COLOR_SCHEMES = Object.freeze(['off', 'light', 'dark']);
 
 export const DEFAULT_SPOOF_SETTINGS = Object.freeze({
   spoofLanguage: true,
@@ -11,6 +13,11 @@ export const DEFAULT_SPOOF_SETTINGS = Object.freeze({
   spoofUaPreset: 'chrome-win',
   spoofHwConcurrency: true,
   spoofHwConcurrencyValue: 8,
+  stripGoogleAuthCookies: false,
+  spoofScreen: false,
+  spoofScreenPreset: '1920x1080',
+  spoofColorScheme: 'off',
+  spoofRender: true,
 });
 
 const COUNTRY_LOCALE = Object.freeze({
@@ -29,6 +36,44 @@ const LOCALE_LANGS = Object.freeze({
   'de-DE': ['de-DE', 'de', 'en-US', 'en'],
 });
 
+const SCREEN_SPECS = Object.freeze({
+  '1920x1080': { width: 1920, height: 1080, deviceScaleFactor: 1 },
+  '2560x1440': { width: 2560, height: 1440, deviceScaleFactor: 1 },
+  '1920x1200': { width: 1920, height: 1200, deviceScaleFactor: 1 },
+  '1366x768': { width: 1366, height: 768, deviceScaleFactor: 1 },
+});
+
+const WEBGL_BY_PRESET = Object.freeze({
+  'chrome-win': {
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+  },
+  'chrome-mac': {
+    vendor: 'Google Inc. (Apple)',
+    renderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)',
+  },
+  'chrome-linux': {
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 OpenGL 4.5.0, OpenGL 4.5.0)',
+  },
+});
+
+const FONTS_BY_PRESET = Object.freeze({
+  'chrome-win': Object.freeze([
+    'arial', 'calibri', 'cambria', 'comic sans ms', 'consolas', 'courier new',
+    'georgia', 'impact', 'segoe ui', 'tahoma', 'times new roman', 'trebuchet ms',
+    'verdana', 'microsoft yahei', 'simsun',
+  ]),
+  'chrome-mac': Object.freeze([
+    'arial', 'courier new', 'georgia', 'helvetica', 'helvetica neue', 'menlo',
+    'monaco', 'times', 'times new roman', 'verdana', 'pingfang sc', 'sf pro text',
+  ]),
+  'chrome-linux': Object.freeze([
+    'arial', 'dejavu sans', 'dejavu sans mono', 'dejavu serif', 'liberation sans',
+    'liberation serif', 'noto sans', 'ubuntu', 'courier new', 'times new roman',
+  ]),
+});
+
 /**
  * @param {object} [raw]
  */
@@ -38,6 +83,8 @@ export function normalizeSpoofSettings(raw) {
   const spoofUaPreset = UA_PRESETS.includes(src.spoofUaPreset) ? src.spoofUaPreset : 'chrome-win';
   let hw = Number(src.spoofHwConcurrencyValue);
   if (!HW_VALUES.includes(hw)) hw = 8;
+  const spoofScreenPreset = SCREEN_PRESETS.includes(src.spoofScreenPreset) ? src.spoofScreenPreset : '1920x1080';
+  const spoofColorScheme = COLOR_SCHEMES.includes(src.spoofColorScheme) ? src.spoofColorScheme : 'off';
   return {
     spoofLanguage: src.spoofLanguage !== false,
     spoofLocale,
@@ -45,6 +92,11 @@ export function normalizeSpoofSettings(raw) {
     spoofUaPreset,
     spoofHwConcurrency: src.spoofHwConcurrency !== false,
     spoofHwConcurrencyValue: hw,
+    stripGoogleAuthCookies: src.stripGoogleAuthCookies === true,
+    spoofScreen: src.spoofScreen === true,
+    spoofScreenPreset,
+    spoofColorScheme,
+    spoofRender: src.spoofRender !== false,
   };
 }
 
@@ -77,6 +129,61 @@ export function parseChromeVersion(ua) {
 export function parseChromeMajor(ua) {
   const major = Number(String(parseChromeVersion(ua)).split('.')[0]);
   return Number.isFinite(major) && major > 0 ? major : 141;
+}
+
+/** Chrome reports deviceMemory as 0.25, 0.5, 1, 2, 4 or 8. */
+export function deviceMemoryFor(hw) {
+  const n = Number(hw);
+  if (n <= 2) return 2;
+  if (n <= 4) return 4;
+  return 8;
+}
+
+export function screenSpec(preset, uaPreset) {
+  const base = SCREEN_SPECS[preset] || SCREEN_SPECS['1920x1080'];
+  const chromeUi = uaPreset === 'chrome-mac' ? 25 : 40;
+  return {
+    width: base.width,
+    height: base.height,
+    deviceScaleFactor: base.deviceScaleFactor,
+    availWidth: base.width,
+    availHeight: Math.max(base.height - chromeUi, 1),
+    colorDepth: 24,
+    pixelDepth: 24,
+  };
+}
+
+export function webglForUaPreset(preset) {
+  return WEBGL_BY_PRESET[UA_PRESETS.includes(preset) ? preset : 'chrome-win'];
+}
+
+export function fontsForUaPreset(preset) {
+  return (FONTS_BY_PRESET[UA_PRESETS.includes(preset) ? preset : 'chrome-win'] || []).slice();
+}
+
+export function seedFromToken(token) {
+  let h = 2166136261;
+  const s = String(token || '1');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Stable canvas/audio seed from Settings only. Not time, not Connect. */
+export function fingerprintSeed(settings) {
+  const s = normalizeSpoofSettings(settings);
+  return seedFromToken(
+    [
+      s.spoofUa ? s.spoofUaPreset : 'ua-off',
+      s.spoofHwConcurrency ? String(s.spoofHwConcurrencyValue) : 'hw-off',
+      s.spoofScreen ? s.spoofScreenPreset : 'screen-off',
+      `color=${s.spoofColorScheme}`,
+      s.spoofLanguage ? s.spoofLocale : 'lang-off',
+      s.spoofRender ? 'render-on' : 'render-off',
+    ].join('|'),
+  );
 }
 
 function greaseBrand() {
@@ -199,6 +306,12 @@ export function buildSpoofProfile(args = {}) {
   const locale = settings.spoofLocale === 'auto' ? localeFromCountry(geo.country) : settings.spoofLocale;
   const chromeUa = args.chromeUa || (args.chromeMajor != null ? String(args.chromeMajor) : '');
   const ua = buildUaPreset(settings.spoofUaPreset, chromeUa || args.chromeMajor || 141);
+  const webgl = webglForUaPreset(settings.spoofUaPreset);
+  const renderSeed = fingerprintSeed(settings);
+  const token = String(
+    args.token
+      || seedFromToken(`${renderSeed}|${geo.latitude}|${geo.longitude}|${geo.timezoneId}|${locale}`),
+  );
   return {
     ...geo,
     spoofLanguage: settings.spoofLanguage,
@@ -215,7 +328,21 @@ export function buildSpoofProfile(args = {}) {
     clientHints: ua.clientHints,
     spoofHwConcurrency: settings.spoofHwConcurrency,
     hardwareConcurrency: settings.spoofHwConcurrencyValue,
-    token: String(args.token || `${Date.now().toString(36)}`),
+    deviceMemory: deviceMemoryFor(settings.spoofHwConcurrencyValue),
+    maxTouchPoints: 0,
+    vendor: 'Google Inc.',
+    product: 'Gecko',
+    pdfViewerEnabled: true,
+    stripGoogleAuthCookies: settings.stripGoogleAuthCookies,
+    spoofScreen: settings.spoofScreen,
+    spoofScreenPreset: settings.spoofScreenPreset,
+    screen: settings.spoofScreen ? screenSpec(settings.spoofScreenPreset, settings.spoofUaPreset) : null,
+    spoofColorScheme: settings.spoofColorScheme,
+    spoofRender: settings.spoofRender,
+    webgl,
+    fonts: fontsForUaPreset(settings.spoofUaPreset),
+    renderSeed,
+    token,
   };
 }
 
@@ -257,7 +384,10 @@ export function applyHeaderSpoof(headers, profile) {
 
 export function spoofLogLine(profile) {
   if (!profile) return 'spoof.profile none';
-  return `spoof.profile country=${profile.country} tz=${profile.timezoneId} locale=${profile.spoofLanguage ? profile.locale : 'off'} ua=${profile.spoofUa ? profile.spoofUaPreset : 'off'} hw=${profile.spoofHwConcurrency ? profile.hardwareConcurrency : 'off'}`;
+  const screen = profile.spoofScreen && profile.screen
+    ? `${profile.screen.width}x${profile.screen.height}`
+    : 'off';
+  return `spoof.profile country=${profile.country} tz=${profile.timezoneId} locale=${profile.spoofLanguage ? profile.locale : 'off'} ua=${profile.spoofUa ? profile.spoofUaPreset : 'off'} hw=${profile.spoofHwConcurrency ? profile.hardwareConcurrency : 'off'} cookie=${profile.stripGoogleAuthCookies ? 'on' : 'off'} screen=${screen} color=${profile.spoofColorScheme || 'off'} render=${profile.spoofRender ? 'on' : 'off'} seed=${profile.renderSeed ?? 0}`;
 }
 
 /**
@@ -283,9 +413,34 @@ export function fingerprintSpoofSource(profile) {
           mobile: false,
           uaPlatform: String(profile.userAgentData?.platform || 'Windows'),
           highEntropy: profile.userAgentData?.highEntropy || {},
+          vendor: 'Google Inc.',
+          product: 'Gecko',
+          pdfViewerEnabled: true,
+          maxTouchPoints: 0,
         }
       : null,
     hw: profile?.spoofHwConcurrency ? Number(profile.hardwareConcurrency) : null,
+    deviceMemory: profile?.spoofHwConcurrency ? deviceMemoryFor(profile.hardwareConcurrency) : null,
+    screen: profile?.spoofScreen && profile.screen
+      ? {
+          width: profile.screen.width,
+          height: profile.screen.height,
+          availWidth: profile.screen.availWidth,
+          availHeight: profile.screen.availHeight,
+          deviceScaleFactor: profile.screen.deviceScaleFactor,
+          colorDepth: profile.screen.colorDepth,
+          pixelDepth: profile.screen.pixelDepth,
+        }
+      : null,
+    colorScheme: profile?.spoofColorScheme && profile.spoofColorScheme !== 'off' ? profile.spoofColorScheme : null,
+    render: profile?.spoofRender
+      ? {
+          seed: Number(profile.renderSeed) || fingerprintSeed(profile),
+          vendor: String(profile.webgl?.vendor || webglForUaPreset(profile.spoofUaPreset).vendor),
+          renderer: String(profile.webgl?.renderer || webglForUaPreset(profile.spoofUaPreset).renderer),
+          fonts: fontsForUaPreset(profile.spoofUaPreset),
+        }
+      : null,
   };
   return `(function () {
   var P = ${JSON.stringify(p)};
@@ -298,6 +453,9 @@ export function fingerprintSpoofSource(profile) {
   }
   function und(obj, key) {
     try { delete obj[key]; } catch (e) {}
+  }
+  function nativeToString(name) {
+    return 'function ' + (name || '') + '() { [native code] }';
   }
   try {
     var coords = {
@@ -352,6 +510,10 @@ export function fingerprintSpoofSource(profile) {
       def(navigator, 'userAgent', function () { return P.ua.userAgent; });
       def(navigator, 'appVersion', function () { return P.ua.appVersion; });
       def(navigator, 'platform', function () { return P.ua.platform; });
+      def(navigator, 'vendor', function () { return P.ua.vendor; });
+      def(navigator, 'product', function () { return P.ua.product; });
+      def(navigator, 'pdfViewerEnabled', function () { return P.ua.pdfViewerEnabled; });
+      def(navigator, 'maxTouchPoints', function () { return P.ua.maxTouchPoints; });
       var uaData = {
         brands: P.ua.brands,
         mobile: P.ua.mobile,
@@ -377,6 +539,10 @@ export function fingerprintSpoofSource(profile) {
       und(navigator, 'appVersion');
       und(navigator, 'platform');
       und(navigator, 'userAgentData');
+      und(navigator, 'vendor');
+      und(navigator, 'product');
+      und(navigator, 'pdfViewerEnabled');
+      und(navigator, 'maxTouchPoints');
     }
   } catch (e) {}
   try {
@@ -384,6 +550,237 @@ export function fingerprintSpoofSource(profile) {
       def(navigator, 'hardwareConcurrency', function () { return P.hw; });
     } else {
       und(navigator, 'hardwareConcurrency');
+    }
+    if (P.deviceMemory != null && isFinite(P.deviceMemory)) {
+      def(navigator, 'deviceMemory', function () { return P.deviceMemory; });
+    } else {
+      und(navigator, 'deviceMemory');
+    }
+  } catch (e) {}
+  try {
+    if (P.screen && typeof screen !== 'undefined') {
+      def(screen, 'width', function () { return P.screen.width; });
+      def(screen, 'height', function () { return P.screen.height; });
+      def(screen, 'availWidth', function () { return P.screen.availWidth; });
+      def(screen, 'availHeight', function () { return P.screen.availHeight; });
+      def(screen, 'colorDepth', function () { return P.screen.colorDepth; });
+      def(screen, 'pixelDepth', function () { return P.screen.pixelDepth; });
+      def(globalThis, 'devicePixelRatio', function () { return P.screen.deviceScaleFactor; });
+    } else if (typeof screen !== 'undefined') {
+      und(screen, 'width');
+      und(screen, 'height');
+      und(screen, 'availWidth');
+      und(screen, 'availHeight');
+      und(screen, 'colorDepth');
+      und(screen, 'pixelDepth');
+      und(globalThis, 'devicePixelRatio');
+    }
+  } catch (e) {}
+  try {
+    if (typeof matchMedia === 'function') {
+      if (!globalThis.__olcMatchMedia) globalThis.__olcMatchMedia = matchMedia.bind(globalThis);
+      if (P.colorScheme) {
+        globalThis.matchMedia = function (query) {
+          var q = String(query || '');
+          if (/prefers-color-scheme/i.test(q)) {
+            var wantDark = P.colorScheme === 'dark';
+            var matches = /dark/i.test(q) ? wantDark : /light/i.test(q) ? !wantDark : wantDark;
+            return {
+              matches: matches,
+              media: q,
+              onchange: null,
+              addListener: function () {},
+              removeListener: function () {},
+              addEventListener: function () {},
+              removeEventListener: function () {},
+              dispatchEvent: function () { return false; }
+            };
+          }
+          return globalThis.__olcMatchMedia(query);
+        };
+      } else {
+        globalThis.matchMedia = globalThis.__olcMatchMedia;
+      }
+    }
+  } catch (e) {}
+  try {
+    if (!globalThis.__olcNatives) globalThis.__olcNatives = {};
+    var N = globalThis.__olcNatives;
+    var spoofedFns = globalThis.__olcSpoofedFns || (globalThis.__olcSpoofedFns = typeof WeakSet === 'function' ? new WeakSet() : null);
+    function remember(key, obj, prop) {
+      if (!obj || N[key]) return;
+      N[key] = obj[prop];
+    }
+    function restore(key, obj, prop) {
+      if (!obj || !N[key]) return;
+      try { obj[prop] = N[key]; } catch (e) {}
+    }
+    function mark(fn, name) {
+      if (!fn) return fn;
+      try { if (spoofedFns) spoofedFns.add(fn); } catch (e) {}
+      try { Object.defineProperty(fn, 'name', { value: name, configurable: true }); } catch (e) {}
+      return fn;
+    }
+    if (!N.toStringHooked && typeof Function !== 'undefined' && Function.prototype) {
+      N.fnToString = Function.prototype.toString;
+      Function.prototype.toString = function () {
+        try {
+          if (spoofedFns && spoofedFns.has(this)) return nativeToString(this.name);
+        } catch (e) {}
+        return N.fnToString.call(this);
+      };
+      mark(Function.prototype.toString, 'toString');
+      N.toStringHooked = true;
+    }
+    if (!P.render) {
+      restore('toDataURL', globalThis.HTMLCanvasElement && HTMLCanvasElement.prototype, 'toDataURL');
+      restore('toBlob', globalThis.HTMLCanvasElement && HTMLCanvasElement.prototype, 'toBlob');
+      restore('getImageData', globalThis.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype, 'getImageData');
+      restore('offscreenConvert', globalThis.OffscreenCanvas && OffscreenCanvas.prototype, 'convertToBlob');
+      restore('glGetParameter', globalThis.WebGLRenderingContext && WebGLRenderingContext.prototype, 'getParameter');
+      restore('gl2GetParameter', globalThis.WebGL2RenderingContext && WebGL2RenderingContext.prototype, 'getParameter');
+      restore('startRendering', (globalThis.OfflineAudioContext && OfflineAudioContext.prototype) || (globalThis.webkitOfflineAudioContext && webkitOfflineAudioContext.prototype), 'startRendering');
+      restore('fontsCheck', globalThis.document && document.fonts, 'check');
+    } else {
+      function mulberry(a) {
+        return function () {
+          a |= 0; a = a + 0x6D2B79F5 | 0;
+          var t = Math.imul(a ^ a >>> 15, 1 | a);
+          t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+          return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+      }
+      function mixSeed(extra) {
+        return (P.render.seed ^ (extra >>> 0)) >>> 0;
+      }
+      function noiseBytes(data, extra) {
+        var rng = mulberry(mixSeed(extra || data.length));
+        var n = Math.min(8, Math.floor(data.length / 4));
+        for (var i = 0; i < n; i++) {
+          var idx = (Math.floor(rng() * (data.length / 4)) * 4) | 0;
+          data[idx] = data[idx] ^ 1;
+        }
+      }
+      function withNoisy2d(canvas, fn) {
+        var ctx = null;
+        try { ctx = canvas.getContext('2d'); } catch (e) {}
+        if (!ctx || !ctx.getImageData || !canvas.width || !canvas.height) return fn();
+        var img;
+        try { img = ctx.getImageData(0, 0, canvas.width, canvas.height); } catch (e) { return fn(); }
+        var copy = new Uint8ClampedArray(img.data);
+        noiseBytes(img.data, canvas.width * 31 + canvas.height);
+        ctx.putImageData(img, 0, 0);
+        try { return fn(); }
+        finally {
+          img.data.set(copy);
+          try { ctx.putImageData(img, 0, 0); } catch (e2) {}
+        }
+      }
+      if (globalThis.HTMLCanvasElement && HTMLCanvasElement.prototype) {
+        remember('toDataURL', HTMLCanvasElement.prototype, 'toDataURL');
+        remember('toBlob', HTMLCanvasElement.prototype, 'toBlob');
+        var origToDataURL = N.toDataURL;
+        var origToBlob = N.toBlob;
+        if (origToDataURL) {
+          HTMLCanvasElement.prototype.toDataURL = mark(function toDataURL() {
+            var args = arguments;
+            var self = this;
+            return withNoisy2d(self, function () { return origToDataURL.apply(self, args); });
+          }, 'toDataURL');
+        }
+        if (origToBlob) {
+          HTMLCanvasElement.prototype.toBlob = mark(function toBlob() {
+            var args = arguments;
+            var self = this;
+            return withNoisy2d(self, function () { return origToBlob.apply(self, args); });
+          }, 'toBlob');
+        }
+      }
+      if (globalThis.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype) {
+        remember('getImageData', CanvasRenderingContext2D.prototype, 'getImageData');
+        var origGetImageData = N.getImageData;
+        if (origGetImageData) {
+          CanvasRenderingContext2D.prototype.getImageData = mark(function getImageData() {
+            var img = origGetImageData.apply(this, arguments);
+            try { noiseBytes(img.data, img.width * 17 + img.height); } catch (e) {}
+            return img;
+          }, 'getImageData');
+        }
+      }
+      if (globalThis.OffscreenCanvas && OffscreenCanvas.prototype && OffscreenCanvas.prototype.convertToBlob) {
+        remember('offscreenConvert', OffscreenCanvas.prototype, 'convertToBlob');
+        var origConvert = N.offscreenConvert;
+        OffscreenCanvas.prototype.convertToBlob = mark(function convertToBlob() {
+          var args = arguments;
+          var self = this;
+          return withNoisy2d(self, function () { return origConvert.apply(self, args); });
+        }, 'convertToBlob');
+      }
+      var VENDOR = 0x9245;
+      var RENDERER = 0x9246;
+      function wrapGL(proto, key) {
+        if (!proto || !proto.getParameter) return;
+        remember(key, proto, 'getParameter');
+        var orig = N[key];
+        proto.getParameter = mark(function getParameter(pname) {
+          if (pname === VENDOR) return P.render.vendor;
+          if (pname === RENDERER) return P.render.renderer;
+          return orig.apply(this, arguments);
+        }, 'getParameter');
+      }
+      wrapGL(globalThis.WebGLRenderingContext && WebGLRenderingContext.prototype, 'glGetParameter');
+      wrapGL(globalThis.WebGL2RenderingContext && WebGL2RenderingContext.prototype, 'gl2GetParameter');
+      var Offline = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext;
+      if (Offline && Offline.prototype && Offline.prototype.startRendering) {
+        remember('startRendering', Offline.prototype, 'startRendering');
+        var origStart = N.startRendering;
+        Offline.prototype.startRendering = mark(function startRendering() {
+          var result = origStart.apply(this, arguments);
+          if (!result || typeof result.then !== 'function') return result;
+          return result.then(function (buf) {
+            try {
+              var ch = buf.getChannelData(0);
+              var rng = mulberry(P.render.seed);
+              var n = Math.min(8, ch.length);
+              for (var i = 0; i < n; i++) {
+                var idx = ((i * 97) + (P.render.seed % 97)) % ch.length;
+                ch[idx] = ch[idx] + (rng() - 0.5) * 1e-7;
+              }
+            } catch (e) {}
+            return buf;
+          });
+        }, 'startRendering');
+      }
+      if (globalThis.document && document.fonts && typeof document.fonts.check === 'function') {
+        remember('fontsCheck', document.fonts, 'check');
+        var origCheck = N.fontsCheck.bind(document.fonts);
+        var allowed = {};
+        for (var fi = 0; fi < P.render.fonts.length; fi++) allowed[P.render.fonts[fi]] = true;
+        document.fonts.check = mark(function check(font, text) {
+          var fam = String(font || '').replace(/^[^'"]*['"]?/, '').replace(/['"].*$/, '').trim().toLowerCase();
+          if (fam && !allowed[fam]) return false;
+          return origCheck(font, text);
+        }, 'check');
+      }
+      if (navigator.gpu && typeof navigator.gpu.requestAdapter === 'function') {
+        if (!N.gpuRequest) N.gpuRequest = navigator.gpu.requestAdapter.bind(navigator.gpu);
+        navigator.gpu.requestAdapter = mark(function requestAdapter() {
+          return N.gpuRequest.apply(navigator.gpu, arguments).then(function (adapter) {
+            if (!adapter) return adapter;
+            try {
+              def(adapter, 'info', function () {
+                return {
+                  vendor: P.render.vendor,
+                  architecture: '',
+                  device: P.render.renderer,
+                  description: P.render.renderer
+                };
+              });
+            } catch (e) {}
+            return adapter;
+          });
+        }, 'requestAdapter');
+      }
     }
   } catch (e) {}
 })();`;

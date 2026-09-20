@@ -31,6 +31,15 @@ const spoofUaEl = document.getElementById('spoof-ua');
 const spoofUaPresetEl = document.getElementById('spoof-ua-preset');
 const spoofHwEl = document.getElementById('spoof-hw');
 const spoofHwValueEl = document.getElementById('spoof-hw-value');
+const spoofScreenEl = document.getElementById('spoof-screen');
+const spoofScreenPresetEl = document.getElementById('spoof-screen-preset');
+const spoofColorSchemeEl = document.getElementById('spoof-color-scheme');
+const spoofRenderEl = document.getElementById('spoof-render');
+const stripGoogleCookiesEl = document.getElementById('strip-google-cookies');
+const iconThemeEl = document.getElementById('icon-theme');
+const showThroughputEl = document.getElementById('show-throughput');
+const settingsCard = document.getElementById('settings-card');
+const settingsHeader = document.getElementById('settings-header');
 const settingsExitEl = document.getElementById('settings-exit');
 const recheckExitBtn = document.getElementById('recheck-exit');
 const networkGuardEl = document.getElementById('network-guard');
@@ -162,18 +171,35 @@ chrome.storage.local.get(
     'mode',
     'verboseLogs',
     'verboseLogsV2',
+    'iconTheme',
     'spoofLanguage',
     'spoofLocale',
     'spoofUa',
     'spoofUaPreset',
     'spoofHwConcurrency',
     'spoofHwConcurrencyValue',
+    'stripGoogleAuthCookies',
+    'spoofScreen',
+    'spoofScreenPreset',
+    'spoofColorScheme',
+    'spoofRender',
+    'settingsOpen',
+    'showThroughput',
   ],
   (stored) => {
     if (stored.uri) uriEl.value = stored.uri;
     updateRoomPreview(uriEl.value);
     modeEl.value = 'tunnel';
     chrome.storage.local.set({ mode: 'tunnel' });
+    if (stored.iconTheme && iconThemeEl) {
+      iconThemeEl.value = stored.iconTheme;
+    }
+    if (stored.settingsOpen && settingsCard) {
+      settingsCard.classList.add('open');
+    }
+    if (showThroughputEl) {
+      showThroughputEl.checked = Boolean(stored.showThroughput);
+    }
     // Default to false (off) for max speed, migrate stale flag if needed
     const isDebug = stored.verboseLogsV2 ? Boolean(stored.verboseLogs) : false;
     if (!stored.verboseLogsV2) {
@@ -187,6 +213,11 @@ chrome.storage.local.get(
       spoofUaPreset: stored.spoofUaPreset || 'chrome-win',
       spoofHwConcurrency: stored.spoofHwConcurrency !== false,
       spoofHwConcurrencyValue: stored.spoofHwConcurrencyValue || 8,
+      stripGoogleAuthCookies: stored.stripGoogleAuthCookies === true,
+      spoofScreen: stored.spoofScreen === true,
+      spoofScreenPreset: stored.spoofScreenPreset || '1920x1080',
+      spoofColorScheme: stored.spoofColorScheme || 'off',
+      spoofRender: stored.spoofRender !== false,
     });
   },
 );
@@ -272,9 +303,15 @@ function applySpoofControls(s) {
   if (s.spoofUaPreset) spoofUaPresetEl.value = s.spoofUaPreset;
   spoofHwEl.checked = s.spoofHwConcurrency !== false;
   if (s.spoofHwConcurrencyValue != null) spoofHwValueEl.value = String(s.spoofHwConcurrencyValue);
+  spoofScreenEl.checked = s.spoofScreen === true;
+  if (s.spoofScreenPreset) spoofScreenPresetEl.value = s.spoofScreenPreset;
+  if (s.spoofColorScheme) spoofColorSchemeEl.value = s.spoofColorScheme;
+  spoofRenderEl.checked = s.spoofRender !== false;
+  stripGoogleCookiesEl.checked = s.stripGoogleAuthCookies === true;
   spoofLocaleEl.disabled = !spoofLanguageEl.checked;
   spoofUaPresetEl.disabled = !spoofUaEl.checked;
   spoofHwValueEl.disabled = !spoofHwEl.checked;
+  spoofScreenPresetEl.disabled = !spoofScreenEl.checked;
 }
 
 function currentSpoofSettings() {
@@ -285,6 +322,11 @@ function currentSpoofSettings() {
     spoofUaPreset: spoofUaPresetEl.value,
     spoofHwConcurrency: spoofHwEl.checked,
     spoofHwConcurrencyValue: Number(spoofHwValueEl.value),
+    stripGoogleAuthCookies: stripGoogleCookiesEl.checked,
+    spoofScreen: spoofScreenEl.checked,
+    spoofScreenPreset: spoofScreenPresetEl.value,
+    spoofColorScheme: spoofColorSchemeEl.value,
+    spoofRender: spoofRenderEl.checked,
   };
 }
 
@@ -297,8 +339,38 @@ function persistSpoofSettings() {
   });
 }
 
-for (const el of [spoofLanguageEl, spoofLocaleEl, spoofUaEl, spoofUaPresetEl, spoofHwEl, spoofHwValueEl]) {
+for (const el of [
+  spoofLanguageEl, spoofLocaleEl, spoofUaEl, spoofUaPresetEl, spoofHwEl, spoofHwValueEl,
+  spoofScreenEl, spoofScreenPresetEl, spoofColorSchemeEl, spoofRenderEl, stripGoogleCookiesEl,
+]) {
   el.addEventListener('change', persistSpoofSettings);
+}
+
+if (settingsHeader && settingsCard) {
+  settingsHeader.addEventListener('click', () => {
+    settingsCard.classList.toggle('open');
+    chrome.storage.local.set({ settingsOpen: settingsCard.classList.contains('open') });
+  });
+}
+
+if (showThroughputEl) {
+  showThroughputEl.addEventListener('change', () => {
+    const showThroughput = showThroughputEl.checked;
+    chrome.storage.local.set({ showThroughput });
+    chrome.runtime.sendMessage({ type: 'SET_SHOW_THROUGHPUT', showThroughput }, (res) => {
+      if (res?.state) scheduleRender(res.state);
+    });
+  });
+}
+
+if (iconThemeEl) {
+  iconThemeEl.addEventListener('change', () => {
+    const theme = iconThemeEl.value;
+    chrome.storage.local.set({ iconTheme: theme });
+    chrome.runtime.sendMessage({ type: 'SET_ICON_THEME', theme }, (res) => {
+      if (res?.state) scheduleRender(res.state);
+    });
+  });
 }
 
 function renderExitLine(state) {
@@ -350,6 +422,12 @@ function render(state) {
   if (typeof state.verboseLogs === 'boolean' && state.verboseLogs !== debugToggle.checked) {
     setDebugState(state.verboseLogs);
   }
+  if (state.iconTheme && iconThemeEl && iconThemeEl.value !== state.iconTheme) {
+    iconThemeEl.value = state.iconTheme;
+  }
+  if (typeof state.showThroughput === 'boolean' && showThroughputEl && showThroughputEl.checked !== state.showThroughput) {
+    showThroughputEl.checked = state.showThroughput;
+  }
 
   const isOpen = statusCard.classList.contains('open');
   statusCard.className = `status-card ${state.status}${isOpen ? ' open' : ''}`;
@@ -375,7 +453,14 @@ function render(state) {
   }
 
   if (state.status === 'connected') {
-    statusSummary.textContent = `in:${f.transformIn || 0} out:${f.transformOut || 0}`;
+    const tp = state.throughput;
+    if (tp && tp.speedMbps > 0.05) {
+      const inM = (tp.speedInMbps || 0).toFixed(1);
+      const outM = (tp.speedOutMbps || 0).toFixed(1);
+      statusSummary.textContent = `↓${inM} ↑${outM} Mbps`;
+    } else {
+      statusSummary.textContent = `in:${f.transformIn || 0} out:${f.transformOut || 0}`;
+    }
   } else if (state.status === 'connecting') {
     statusSummary.textContent = `${activeFlagsCount}/${FLAG_LABELS.length}`;
   } else if (state.error) {

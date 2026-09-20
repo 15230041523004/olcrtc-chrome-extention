@@ -69,6 +69,8 @@ export const interceptStats = {
   cacheMisses: 0,
   telemetryBlocked: 0,
   bytesSaved: 0,
+  bytesIn: 0,
+  bytesOut: 0,
 };
 
 export function getInterceptStats() {
@@ -86,6 +88,8 @@ export function resetInterceptStats() {
   interceptStats.cacheMisses = 0;
   interceptStats.telemetryBlocked = 0;
   interceptStats.bytesSaved = 0;
+  interceptStats.bytesIn = 0;
+  interceptStats.bytesOut = 0;
 }
 
 export const SWR_GRACE_MS = 60 * 60 * 1000; // 1 hour stale grace period for static assets
@@ -278,14 +282,37 @@ export function getSpoofProfile() {
 }
 
 export async function setSpoofProfile(profile) {
+  const wasOn = spoofProfile?.stripGoogleAuthCookies === true;
   spoofProfile = profile || spoofProfile;
   onLog(spoofLogLine(spoofProfile));
+  await syncGoogleAuthCookieIsolation(wasOn);
   for (const [id, info] of attachedTabs.entries()) {
     info.spoofScriptId = await applySpoof(id, info.spoofScriptId);
   }
   for (const info of childSessions.values()) {
     info.spoofScriptId = await applySpoof(info.source, info.spoofScriptId, info.type === 'iframe');
   }
+}
+
+async function snapshotGoogleAuthCookiesAndLog() {
+  try {
+    const n = await snapshotGoogleAuthCookiesFromStore();
+    onLog(`cookie.snapshot n=${n}`);
+  } catch (err) {
+    onLog(`cookie.snapshot error ${err.message}`);
+  }
+}
+
+async function syncGoogleAuthCookieIsolation(wasOn) {
+  const on = spoofProfile?.stripGoogleAuthCookies === true;
+  if (!on) {
+    if (wasOn || googleAuthCookieSnapshot.size) {
+      setGoogleAuthCookieSnapshot([]);
+      onLog('cookie.snapshot cleared');
+    }
+    return;
+  }
+  if (interceptActive && !wasOn) await snapshotGoogleAuthCookiesAndLog();
 }
 
 function skipUrl(url) {
@@ -396,6 +423,7 @@ export function stripGoogleAuthCookies(cookieStr, snapshot = googleAuthCookieSna
 }
 
 export function applyGoogleAuthCookieStrip(headers, url) {
+  if (!spoofProfile?.stripGoogleAuthCookies) return 0;
   if (!headers || !isGoogleAccountHost(url)) return 0;
   if (!googleAuthCookieSnapshot.size) return 0;
   let key = null;
@@ -674,11 +702,11 @@ export async function startIntercept(targetTabId = null) {
   if (starting) {
     clearResponseCache();
     clearCookieCache();
-    try {
-      const n = await snapshotGoogleAuthCookiesFromStore();
-      onLog(`cookie.snapshot n=${n}`);
-    } catch (err) {
-      onLog(`cookie.snapshot error ${err.message}`);
+    if (spoofProfile?.stripGoogleAuthCookies) {
+      await snapshotGoogleAuthCookiesAndLog();
+    } else {
+      setGoogleAuthCookieSnapshot([]);
+      onLog('cookie.snapshot skipped');
     }
   }
   if (generation !== interceptGeneration) return;
@@ -1156,6 +1184,7 @@ async function handlePaused(source, params) {
           const res = await existing.promise;
           const elapsedMs = Math.round(performance.now() - startTime);
           const byteLen = res.bodyLength ?? (res.body?.length || 0);
+          interceptStats.bytesIn += byteLen;
           const safePhrase = (res.statusText || 'OK').replace(/[^\x20-\x7e]/g, '').trim() || 'OK';
           const fulfillRes = await cdp(source, 'Fetch.fulfillRequest', {
             requestId,
@@ -1232,6 +1261,8 @@ async function handlePaused(source, params) {
 
     let res;
     try {
+      const outBytes = (bodyB64?.length || 0) + url.length + 150;
+      interceptStats.bytesOut += outBytes;
       res = await proxyFn({ method, url, headers, bodyB64, body });
       if (!attachedTabs.has(source.tabId)) {
         if (inflightKey) rejectInflight?.(new Error('tab detached'));
@@ -1269,6 +1300,7 @@ async function handlePaused(source, params) {
           ? u8ToB64(res.body instanceof Uint8Array ? res.body : Uint8Array.from(res.body))
           : '';
     const byteLen = res.bodyLength ?? (res.body?.length || 0);
+    interceptStats.bytesIn += byteLen;
     const elapsedMs = Math.round(performance.now() - startTime);
     const safePhrase = (res.statusText || 'OK').replace(/[^\x20-\x7e]/g, '').trim() || 'OK';
     const fulfillParams = {
@@ -1396,6 +1428,32 @@ async function applySpoof(id, prevScriptId, hasPage = true) {
       await cdpTry(id, 'Emulation.setUserAgentOverride', uaParams);
     } else {
       await cdpTry(id, 'Emulation.setUserAgentOverride', { userAgent: '' });
+    }
+    if (profile.spoofHwConcurrency && profile.hardwareConcurrency) {
+      await cdpTry(id, 'Emulation.setHardwareConcurrencyOverride', {
+        hardwareConcurrency: profile.hardwareConcurrency,
+      });
+    }
+    if (hasPage) {
+      if (profile.spoofScreen && profile.screen) {
+        await cdpTry(id, 'Emulation.setDeviceMetricsOverride', {
+          width: profile.screen.width,
+          height: profile.screen.height,
+          deviceScaleFactor: profile.screen.deviceScaleFactor,
+          mobile: false,
+          screenWidth: profile.screen.width,
+          screenHeight: profile.screen.height,
+        });
+      } else {
+        await cdpTry(id, 'Emulation.clearDeviceMetricsOverride');
+      }
+      if (profile.spoofColorScheme && profile.spoofColorScheme !== 'off') {
+        await cdpTry(id, 'Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-color-scheme', value: profile.spoofColorScheme }],
+        });
+      } else {
+        await cdpTry(id, 'Emulation.setEmulatedMedia', { media: '', features: [] });
+      }
     }
 
     if (prevScriptId) {

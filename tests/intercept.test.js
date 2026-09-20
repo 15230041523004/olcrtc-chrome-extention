@@ -129,7 +129,16 @@ const {
   getGoogleAuthCookieSnapshot,
 } = await import('../extension/lib/intercept.js');
 
-test('isGoogleAccountHost and stripGoogleAuthCookies drop snapshotted SID/NID and keep PREF and new login cookies', () => {
+function cookieSpoofProfile(on, token = 'ck') {
+  return buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: { ...DEFAULT_SPOOF_SETTINGS, stripGoogleAuthCookies: on },
+    chromeMajor: 141,
+    token,
+  });
+}
+
+test('isGoogleAccountHost and stripGoogleAuthCookies drop snapshotted SID/NID and keep PREF and new login cookies', async () => {
   assert.equal(isGoogleAccountHost('https://flow.google.com/'), true);
   assert.equal(isGoogleAccountHost('https://accounts.google.com/'), true);
   assert.equal(isGoogleAccountHost('https://www.gstatic.com/x'), true);
@@ -147,12 +156,16 @@ test('isGoogleAccountHost and stripGoogleAuthCookies drop snapshotted SID/NID an
   const headers = { Cookie: 'SID=secret; session=1' };
   assert.equal(applyGoogleAuthCookieStrip(headers, 'https://example.com/'), 0);
   assert.equal(headers.Cookie, 'SID=secret; session=1');
+  assert.equal(applyGoogleAuthCookieStrip(headers, 'https://flow.google.com/'), 0, 'strip is off by default');
+  assert.equal(headers.Cookie, 'SID=secret; session=1');
+  await setSpoofProfile(cookieSpoofProfile(true, 'ck-on'));
   assert.ok(applyGoogleAuthCookieStrip(headers, 'https://flow.google.com/') > 0);
   assert.equal(headers.Cookie, 'session=1');
   setGoogleAuthCookieSnapshot([]);
   const login = { Cookie: 'SID=secret; __Host-GAPS=fresh' };
   assert.equal(applyGoogleAuthCookieStrip(login, 'https://accounts.google.com/'), 0);
   assert.equal(login.Cookie, 'SID=secret; __Host-GAPS=fresh');
+  await setSpoofProfile(cookieSpoofProfile(false, 'ck-off'));
 });
 
 test('isPrivilegedTabUrl identifies non-interceptable schemes', () => {
@@ -857,7 +870,39 @@ test('setSpoofProfile re-sends Emulation and replaces NewDocument script', async
   assert.equal(tz.params.timezoneId, 'America/Los_Angeles');
   const locale = debuggerCommands.find((c) => c.method === 'Emulation.setLocaleOverride');
   assert.equal(locale.params.locale, 'en-US');
+  const hw = debuggerCommands.find((c) => c.method === 'Emulation.setHardwareConcurrencyOverride');
+  assert.equal(hw.params.hardwareConcurrency, 4);
+  assert.ok(debuggerCommands.some((c) => c.method === 'Emulation.clearDeviceMetricsOverride'));
   assert.ok(addedBefore >= 2, 'attach injects WebRTC block and spoof scripts');
+});
+
+test('screen spoof sends device metrics; color-scheme sends emulated media', async () => {
+  debuggerCommands.length = 0;
+  mockTabs.set(23, { id: 23, url: 'https://example.com/' });
+  setHandshakeOk(true);
+  await attachTab(23, 'https://example.com/');
+  debuggerCommands.length = 0;
+  const next = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: {
+      ...DEFAULT_SPOOF_SETTINGS,
+      spoofScreen: true,
+      spoofScreenPreset: '1920x1080',
+      spoofColorScheme: 'dark',
+    },
+    chromeMajor: 141,
+    token: 'screen-on',
+  });
+  await setSpoofProfile(next);
+  const metrics = debuggerCommands.find((c) => c.method === 'Emulation.setDeviceMetricsOverride');
+  assert.ok(metrics);
+  assert.equal(metrics.params.width, 1920);
+  assert.equal(metrics.params.height, 1080);
+  assert.equal(metrics.params.mobile, false);
+  const media = debuggerCommands.find((c) => c.method === 'Emulation.setEmulatedMedia');
+  assert.ok(media);
+  assert.equal(media.params.features[0].name, 'prefers-color-scheme');
+  assert.equal(media.params.features[0].value, 'dark');
 });
 
 test('proxied requests rewrite Accept-Language and User-Agent when spoof is on', async () => {
@@ -1188,6 +1233,7 @@ test('proxied Google requests drop SID/NID; other hosts keep cookies', async () 
   mockTabs.set(50, { id: 50, url: 'https://flow.google.com/', active: true });
   mockTabs.set(51, { id: 51, url: 'https://example.com/', active: false });
   setHandshakeOk(true);
+  await setSpoofProfile(cookieSpoofProfile(true, 'ck-proxy'));
   setGoogleAuthCookieSnapshot(['SID=secret', 'NID=n1', '__Secure-1PSID=x']);
   await attachTab(50, 'https://flow.google.com/');
   await attachTab(51, 'https://example.com/');
@@ -1243,6 +1289,7 @@ test('proxied Google requests drop SID/NID; other hosts keep cookies', async () 
   const ock = otherHdrs?.Cookie || otherHdrs?.cookie || '';
   assert.equal(ock.includes('SID=secret'), true);
   assert.equal(ock.includes('session=1'), true);
+  await setSpoofProfile(cookieSpoofProfile(false, 'ck-proxy-off'));
 });
 
 test('restarting an active intercept does not classify fresh sign-in cookies as old', async () => {
@@ -1252,12 +1299,47 @@ test('restarting an active intercept does not classify fresh sign-in cookies as 
   let value = 'old-session';
   chrome.cookies = { getAll: async () => [{ name: 'SID', value }] };
   try {
+    await setSpoofProfile(cookieSpoofProfile(true, 'ck-restart'));
     await startIntercept();
     assert.ok(getGoogleAuthCookieSnapshot().has('SID=old-session'));
     value = 'fresh-sign-in';
     await startIntercept();
     assert.ok(!getGoogleAuthCookieSnapshot().has('SID=fresh-sign-in'));
     assert.equal(stripGoogleAuthCookies('SID=fresh-sign-in').cookie, 'SID=fresh-sign-in');
+  } finally {
+    await stopIntercept();
+    chrome.cookies = previousCookies;
+    setGoogleAuthCookieSnapshot([]);
+    await setSpoofProfile(cookieSpoofProfile(false, 'ck-restart-off'));
+  }
+});
+
+test('startIntercept does not snapshot Google cookies when isolation is off', async () => {
+  await stopIntercept();
+  const previousCookies = chrome.cookies;
+  chrome.cookies = { getAll: async () => [{ name: 'SID', value: 'keep-me' }] };
+  try {
+    await setSpoofProfile(cookieSpoofProfile(false, 'ck-skip'));
+    await startIntercept();
+    assert.equal(getGoogleAuthCookieSnapshot().size, 0);
+  } finally {
+    await stopIntercept();
+    chrome.cookies = previousCookies;
+  }
+});
+
+test('enabling Google cookie isolation while intercepting snapshots; disabling clears', async () => {
+  await stopIntercept();
+  const previousCookies = chrome.cookies;
+  chrome.cookies = { getAll: async () => [{ name: 'SID', value: 'live' }] };
+  try {
+    await setSpoofProfile(cookieSpoofProfile(false, 'ck-live-off'));
+    await startIntercept();
+    assert.equal(getGoogleAuthCookieSnapshot().size, 0);
+    await setSpoofProfile(cookieSpoofProfile(true, 'ck-live-on'));
+    assert.ok(getGoogleAuthCookieSnapshot().has('SID=live'));
+    await setSpoofProfile(cookieSpoofProfile(false, 'ck-live-off2'));
+    assert.equal(getGoogleAuthCookieSnapshot().size, 0);
   } finally {
     await stopIntercept();
     chrome.cookies = previousCookies;

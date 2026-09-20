@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "olcRTC Tunnel (research)",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "olcRTC Research: Experimental WebRTC video-carrier data encapsulation protocol research and benchmarking.",
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'"
@@ -21,9 +21,19 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_title": "olcRTC Tunnel",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
   },
   "homepage_url": "https://github.com/15230041523004/olcrtc-chrome-extention"
 }

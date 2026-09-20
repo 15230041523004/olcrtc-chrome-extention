@@ -8,11 +8,18 @@ import {
   buildSpoofProfile,
   buildUaPreset,
   DEFAULT_SPOOF_SETTINGS,
+  deviceMemoryFor,
   fingerprintSpoofSource,
+  fontsForUaPreset,
+  fingerprintSeed,
   localeFromCountry,
   normalizeSpoofSettings,
   parseChromeMajor,
   parseChromeVersion,
+  screenSpec,
+  seedFromToken,
+  spoofLogLine,
+  webglForUaPreset,
 } from '../extension/lib/fingerprint-spoof.js';
 
 test('normalizeSpoofSettings defaults on and rejects unknown locale/ua/hw', () => {
@@ -23,6 +30,12 @@ test('normalizeSpoofSettings defaults on and rejects unknown locale/ua/hw', () =
   assert.equal(d.spoofUaPreset, 'chrome-win');
   assert.equal(d.spoofHwConcurrency, true);
   assert.equal(d.spoofHwConcurrencyValue, 8);
+  assert.equal(d.stripGoogleAuthCookies, false);
+  assert.equal(DEFAULT_SPOOF_SETTINGS.stripGoogleAuthCookies, false);
+  assert.equal(d.spoofScreen, false);
+  assert.equal(d.spoofScreenPreset, '1920x1080');
+  assert.equal(d.spoofColorScheme, 'off');
+  assert.equal(d.spoofRender, true);
 
   const n = normalizeSpoofSettings({
     spoofLanguage: false,
@@ -31,6 +44,7 @@ test('normalizeSpoofSettings defaults on and rejects unknown locale/ua/hw', () =
     spoofUaPreset: 'firefox',
     spoofHwConcurrency: false,
     spoofHwConcurrencyValue: 3,
+    stripGoogleAuthCookies: true,
   });
   assert.equal(n.spoofLanguage, false);
   assert.equal(n.spoofLocale, 'auto');
@@ -38,6 +52,19 @@ test('normalizeSpoofSettings defaults on and rejects unknown locale/ua/hw', () =
   assert.equal(n.spoofUaPreset, 'chrome-win');
   assert.equal(n.spoofHwConcurrency, false);
   assert.equal(n.spoofHwConcurrencyValue, 8);
+  assert.equal(n.stripGoogleAuthCookies, true);
+  assert.equal(normalizeSpoofSettings({ stripGoogleAuthCookies: 'yes' }).stripGoogleAuthCookies, false);
+  const extra = normalizeSpoofSettings({
+    spoofScreen: true,
+    spoofScreenPreset: '2560x1440',
+    spoofColorScheme: 'dark',
+    spoofRender: false,
+  });
+  assert.equal(extra.spoofScreen, true);
+  assert.equal(extra.spoofScreenPreset, '2560x1440');
+  assert.equal(extra.spoofColorScheme, 'dark');
+  assert.equal(extra.spoofRender, false);
+  assert.equal(normalizeSpoofSettings({ spoofScreenPreset: '4k', spoofColorScheme: 'sepia' }).spoofScreenPreset, '1920x1080');
 });
 
 test('localeFromCountry maps exit country and falls back to en-US', () => {
@@ -77,7 +104,25 @@ test('buildSpoofProfile auto locale follows exit country', () => {
   assert.equal(p.locale, 'en-GB');
   assert.equal(p.timezoneId, 'Europe/London');
   assert.equal(p.hardwareConcurrency, 8);
+  assert.equal(p.deviceMemory, 8);
+  assert.equal(p.maxTouchPoints, 0);
+  assert.equal(p.vendor, 'Google Inc.');
+  assert.equal(p.screen, null);
+  assert.equal(p.spoofRender, true);
+  assert.equal(p.webgl.vendor, webglForUaPreset('chrome-win').vendor);
+  assert.equal(p.stripGoogleAuthCookies, false);
   assert.match(p.userAgent, /Chrome\/141/);
+  assert.match(spoofLogLine(p), /cookie=off/);
+  assert.match(spoofLogLine(p), /screen=off/);
+  assert.match(spoofLogLine(p), /render=on/);
+  const isolated = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: { ...DEFAULT_SPOOF_SETTINGS, stripGoogleAuthCookies: true },
+    chromeMajor: 141,
+    token: 't-cookie',
+  });
+  assert.equal(isolated.stripGoogleAuthCookies, true);
+  assert.match(spoofLogLine(isolated), /cookie=on/);
 });
 
 test('applyHeaderSpoof overwrites UA and Accept-Language only when enabled', () => {
@@ -208,4 +253,141 @@ test('fingerprintSpoofSource restores native language/ua/hw when those spoofs ar
   assert.equal(navigator.language, 'nl-NL');
   assert.equal(navigator.userAgent, 'real-ua');
   assert.equal(navigator.hardwareConcurrency, 32);
+});
+
+test('deviceMemory follows hw and is clamped to Chrome’s 8 GB cap', () => {
+  assert.equal(deviceMemoryFor(2), 2);
+  assert.equal(deviceMemoryFor(4), 4);
+  assert.equal(deviceMemoryFor(8), 8);
+  assert.equal(deviceMemoryFor(16), 8);
+});
+
+test('screen and webgl presets follow UA OS', () => {
+  const win = screenSpec('1920x1080', 'chrome-win');
+  assert.equal(win.width, 1920);
+  assert.equal(win.availHeight, 1040);
+  const mac = screenSpec('1920x1080', 'chrome-mac');
+  assert.equal(mac.availHeight, 1055);
+  assert.match(webglForUaPreset('chrome-mac').renderer, /Apple M1/);
+  assert.match(webglForUaPreset('chrome-win').renderer, /Direct3D11/);
+  assert.ok(fontsForUaPreset('chrome-win').includes('segoe ui'));
+  assert.equal(seedFromToken('abc'), seedFromToken('abc'));
+  assert.notEqual(seedFromToken('abc'), seedFromToken('abd'));
+});
+
+test('buildSpoofProfile carries screen metrics only when enabled', () => {
+  const on = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: { ...DEFAULT_SPOOF_SETTINGS, spoofScreen: true, spoofScreenPreset: '2560x1440', spoofColorScheme: 'dark' },
+    chromeMajor: 141,
+    token: 'scr',
+  });
+  assert.equal(on.screen.width, 2560);
+  assert.equal(on.screen.height, 1440);
+  assert.equal(on.spoofColorScheme, 'dark');
+  assert.match(spoofLogLine(on), /screen=2560x1440/);
+  assert.match(spoofLogLine(on), /color=dark/);
+});
+
+test('fingerprintSpoofSource stubs deviceMemory and native-chrome fields', () => {
+  const profile = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: { ...DEFAULT_SPOOF_SETTINGS, spoofHwConcurrencyValue: 4 },
+    chromeMajor: 141,
+    token: 'nav2',
+  });
+  const navigator = Object.create({
+    deviceMemory: 32,
+    maxTouchPoints: 5,
+    vendor: 'odd',
+    product: 'odd',
+    pdfViewerEnabled: false,
+    hardwareConcurrency: 32,
+  });
+  const screen = Object.create({ width: 100, height: 100 });
+  const sandbox = {
+    navigator,
+    screen,
+    queueMicrotask: (fn) => fn(),
+    Date,
+    Promise,
+    Object,
+    Array,
+    isFinite,
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(fingerprintSpoofSource(profile), sandbox);
+  assert.equal(navigator.deviceMemory, 4);
+  assert.equal(navigator.maxTouchPoints, 0);
+  assert.equal(navigator.vendor, 'Google Inc.');
+  assert.equal(navigator.product, 'Gecko');
+  assert.equal(navigator.pdfViewerEnabled, true);
+});
+
+test('render seed is determined by Settings, not Connect time or token', () => {
+  const a = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: DEFAULT_SPOOF_SETTINGS,
+    chromeMajor: 141,
+    token: 'connect-1',
+  });
+  const b = buildSpoofProfile({
+    geo: { ...FALLBACK_GEO_PROFILE, country: 'GB', timezoneId: 'Europe/London', latitude: 51.5, longitude: -0.1 },
+    settings: DEFAULT_SPOOF_SETTINGS,
+    chromeMajor: 141,
+    token: 'connect-2',
+  });
+  const c = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: DEFAULT_SPOOF_SETTINGS,
+    chromeMajor: 141,
+  });
+  assert.equal(a.renderSeed, b.renderSeed);
+  assert.equal(a.renderSeed, c.renderSeed);
+  assert.equal(a.renderSeed, fingerprintSeed(DEFAULT_SPOOF_SETTINGS));
+  const srcA = fingerprintSpoofSource(a);
+  const srcB = fingerprintSpoofSource(b);
+  assert.ok(srcA.includes(`"seed":${a.renderSeed}`));
+  assert.ok(srcB.includes(`"seed":${a.renderSeed}`));
+  assert.ok(!srcA.includes(Date.now().toString(36)));
+
+  const mac = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: { ...DEFAULT_SPOOF_SETTINGS, spoofUaPreset: 'chrome-mac' },
+    chromeMajor: 141,
+    token: 'connect-1',
+  });
+  assert.notEqual(mac.renderSeed, a.renderSeed);
+
+  const hw = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: { ...DEFAULT_SPOOF_SETTINGS, spoofHwConcurrencyValue: 4 },
+    chromeMajor: 141,
+  });
+  assert.notEqual(hw.renderSeed, a.renderSeed);
+  assert.equal(fingerprintSeed({ ...DEFAULT_SPOOF_SETTINGS }), fingerprintSeed({ ...DEFAULT_SPOOF_SETTINGS, stripGoogleAuthCookies: true }));
+});
+
+test('render spoof injects stable canvas/webgl/audio/font hooks; off restores skip', () => {
+  const on = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: DEFAULT_SPOOF_SETTINGS,
+    chromeMajor: 141,
+    token: 'rend-on',
+  });
+  const off = buildSpoofProfile({
+    geo: FALLBACK_GEO_PROFILE,
+    settings: { ...DEFAULT_SPOOF_SETTINGS, spoofRender: false },
+    chromeMajor: 141,
+    token: 'rend-off',
+  });
+  const onSrc = fingerprintSpoofSource(on);
+  const offSrc = fingerprintSpoofSource(off);
+  assert.ok(onSrc.includes('"render":{'));
+  assert.ok(onSrc.includes('toDataURL'));
+  assert.ok(onSrc.includes('getParameter'));
+  assert.ok(onSrc.includes('startRendering'));
+  assert.ok(onSrc.includes('fonts'));
+  assert.match(onSrc, /"seed":\d+/);
+  assert.ok(offSrc.includes('"render":null'));
 });

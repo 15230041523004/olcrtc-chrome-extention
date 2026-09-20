@@ -51,56 +51,117 @@
     </div>
 
     <div class="settings-card" id="settings-card">
-      <div class="settings-header">
+      <div class="settings-header" id="settings-header" title="Click to view or hide settings">
         <span class="settings-title">Settings</span>
         <span class="settings-hint">isolation matches tunnel exit</span>
+        <span class="settings-chevron">▾</span>
       </div>
-      <p class="settings-exit" id="settings-exit">Exit: waiting for handshake</p>
-      <button id="recheck-exit" type="button" class="ghost" disabled>Check exit through tunnel</button>
-      <p class="settings-exit" id="network-guard">Direct traffic protection: off</p>
-      <div class="settings-row">
-        <label class="spoof-label locked" title="Always on while intercept is attached">
-          <input id="spoof-geo" type="checkbox" checked disabled />
-          <span>Geo &amp; timezone</span>
-        </label>
-        <span class="settings-lock">always on</span>
-      </div>
-      <div class="settings-row">
-        <label class="spoof-label">
-          <input id="spoof-language" type="checkbox" checked />
-          <span>Language / locale</span>
-        </label>
-        <select id="spoof-locale" title="Locale">
-          <option value="auto">auto from exit</option>
-          <option value="en-US">en-US</option>
-          <option value="en-GB">en-GB</option>
-          <option value="ru-RU">ru-RU</option>
-          <option value="nl-NL">nl-NL</option>
-        </select>
-      </div>
-      <div class="settings-row">
-        <label class="spoof-label">
-          <input id="spoof-ua" type="checkbox" checked />
-          <span>User-Agent</span>
-        </label>
-        <select id="spoof-ua-preset" title="User-Agent preset">
-          <option value="chrome-win">Chrome Windows</option>
-          <option value="chrome-mac">Chrome macOS</option>
-          <option value="chrome-linux">Chrome Linux</option>
-        </select>
-      </div>
-      <div class="settings-row">
-        <label class="spoof-label">
-          <input id="spoof-hw" type="checkbox" checked />
-          <span>hardwareConcurrency</span>
-        </label>
-        <select id="spoof-hw-value" title="hardwareConcurrency">
-          <option value="2">2</option>
-          <option value="4">4</option>
-          <option value="8" selected>8</option>
-          <option value="12">12</option>
-          <option value="16">16</option>
-        </select>
+      <div class="settings-accordion" id="settings-accordion">
+        <p class="settings-exit" id="settings-exit">Exit: waiting for handshake</p>
+        <button id="recheck-exit" type="button" class="ghost" disabled>Check exit through tunnel</button>
+        <p class="settings-exit" id="network-guard">Direct traffic protection: off</p>
+        <div class="settings-row has-tip">
+          <label class="spoof-label" for="icon-theme">
+            <span>Icon Theme</span>
+          </label>
+          <select id="icon-theme" title="Toolbar Icon Theme">
+            <option value="wormhole" selected>🌀 Wormhole</option>
+            <option value="optics">💎 Optics (Badge)</option>
+            <option value="radar">📡 Radar</option>
+          </select>
+          <span class="settings-tip" role="tooltip" id="icon-theme-tip">Dynamic toolbar indicator theme: Wormhole (optical aperture), Optics (refracted prism + badge), Radar (sonar).</span>
+        </div>
+        <div class="settings-row has-tip">
+          <label class="spoof-label" for="show-throughput">
+            <input id="show-throughput" type="checkbox" aria-describedby="show-throughput-tip" />
+            <span>Throughput badge (Mbps)</span>
+          </label>
+          <span class="settings-lock">default off</span>
+          <span class="settings-tip" role="tooltip" id="show-throughput-tip">Show real-time transfer speed in Mbps on the toolbar badge instead of load percentage.</span>
+        </div>
+        <div class="settings-row">
+          <label class="spoof-label locked" title="Always on while intercept is attached">
+            <input id="spoof-geo" type="checkbox" checked disabled />
+            <span>Geo &amp; timezone</span>
+          </label>
+          <span class="settings-lock">always on</span>
+        </div>
+        <div class="settings-row">
+          <label class="spoof-label">
+            <input id="spoof-language" type="checkbox" checked />
+            <span>Language / locale</span>
+          </label>
+          <select id="spoof-locale" title="Locale">
+            <option value="auto">auto from exit</option>
+            <option value="en-US">en-US</option>
+            <option value="en-GB">en-GB</option>
+            <option value="ru-RU">ru-RU</option>
+            <option value="nl-NL">nl-NL</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label class="spoof-label">
+            <input id="spoof-ua" type="checkbox" checked />
+            <span>User-Agent</span>
+          </label>
+          <select id="spoof-ua-preset" title="User-Agent preset">
+            <option value="chrome-win">Chrome Windows</option>
+            <option value="chrome-mac">Chrome macOS</option>
+            <option value="chrome-linux">Chrome Linux</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label class="spoof-label">
+            <input id="spoof-hw" type="checkbox" checked />
+            <span>hardwareConcurrency</span>
+          </label>
+          <select id="spoof-hw-value" title="hardwareConcurrency">
+            <option value="2">2</option>
+            <option value="4">4</option>
+            <option value="8" selected>8</option>
+            <option value="12">12</option>
+            <option value="16">16</option>
+          </select>
+        </div>
+        <div class="settings-row has-tip">
+          <label class="spoof-label" for="spoof-screen">
+            <input id="spoof-screen" type="checkbox" aria-describedby="spoof-screen-tip" />
+            <span>Screen</span>
+          </label>
+          <select id="spoof-screen-preset" title="Screen preset">
+            <option value="1920x1080">1920×1080</option>
+            <option value="2560x1440">2560×1440</option>
+            <option value="1920x1200">1920×1200</option>
+            <option value="1366x768">1366×768</option>
+          </select>
+          <span class="settings-tip" role="tooltip" id="spoof-screen-tip">Off: keep the real window size. On: CDP resizes the tab to this resolution (also spoofs screen.width / devicePixelRatio). Default off because it changes the viewport.</span>
+        </div>
+        <div class="settings-row has-tip">
+          <label class="spoof-label" for="spoof-color-scheme">
+            <span>Color scheme</span>
+          </label>
+          <select id="spoof-color-scheme" title="prefers-color-scheme">
+            <option value="off">system</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+          <span class="settings-tip" role="tooltip" id="spoof-color-scheme-tip">system: do not override prefers-color-scheme. light/dark: CDP Emulation.setEmulatedMedia plus matchMedia.</span>
+        </div>
+        <div class="settings-row has-tip">
+          <label class="spoof-label" for="spoof-render">
+            <input id="spoof-render" type="checkbox" checked aria-describedby="spoof-render-tip" />
+            <span>Render fingerprint</span>
+          </label>
+          <span class="settings-tip" role="tooltip" id="spoof-render-tip">Canvas / WebGL / Audio / fonts follow these Settings (UA, cores, screen). Same settings → same fingerprint on every Connect. Changing a setting above changes it. Not random. Not a different GPU.</span>
+        </div>
+        <div class="settings-row has-tip">
+          <label class="spoof-label" for="strip-google-cookies">
+            <input id="strip-google-cookies" type="checkbox" aria-describedby="strip-google-cookies-tip" />
+            <span>Fresh Google session</span>
+          </label>
+          <span class="settings-lock">default off</span>
+          <span class="settings-tip" role="tooltip" id="strip-google-cookies-tip">Off: keep the current Google login through the tunnel. On: do not send profile SID/NID — Google sees a new session from the exit, and you must sign in again on every Connect.</span>
+        </div>
       </div>
     </div>
 

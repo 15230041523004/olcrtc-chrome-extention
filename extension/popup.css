@@ -416,6 +416,11 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.settings-header:hover {
+  opacity: 0.95;
 }
 .settings-title {
   font-weight: 650;
@@ -429,6 +434,25 @@ button:disabled {
   font-family: ui-monospace, Consolas, monospace;
   letter-spacing: 0.2px;
 }
+.settings-chevron {
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+  user-select: none;
+  margin-left: 2px;
+}
+.settings-card.open .settings-chevron {
+  transform: rotate(180deg);
+}
+.settings-accordion {
+  display: none;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #242a36;
+}
+.settings-card.open .settings-accordion {
+  display: block;
+}
 .settings-exit {
   margin: 6px 0 8px;
   font-family: ui-monospace, Consolas, monospace;
@@ -437,6 +461,7 @@ button:disabled {
   line-height: 1.35;
 }
 .settings-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -487,6 +512,29 @@ button:disabled {
 }
 .settings-row select:disabled {
   opacity: 0.45;
+}
+.settings-row.has-tip .settings-tip {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 8;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #0d1017;
+  border: 1px solid #2c3444;
+  color: var(--fg);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1.4;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  white-space: normal;
+}
+.settings-row.has-tip:hover .settings-tip,
+.settings-row.has-tip:focus-within .settings-tip {
+  display: block;
 }
 .debug-card {
   border: 1px solid #242a36;

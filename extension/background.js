@@ -17,6 +17,13 @@ import {
   normalizeSpoofSettings,
   buildSpoofProfile,
 } from './lib/fingerprint-spoof.js';
+import {
+  ICON_THEMES,
+  DEFAULT_ICON_THEME,
+  resolveIconState,
+  getThemeBadge,
+  generateIconData,
+} from './lib/icon-theme.js';
 
 configureIntercept({
   log: (line) => log(line),
@@ -81,6 +88,7 @@ const state = {
   exitGeoLookup: { status: 'idle', checkedAt: null, attempts: [] },
   spoofProfile: null,
   networkGuard: false,
+  iconTheme: DEFAULT_ICON_THEME,
 };
 
 // Recover conservatively after a service-worker/browser restart: dynamic
@@ -205,6 +213,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       spoofUaPreset: next.spoofUaPreset,
       spoofHwConcurrency: next.spoofHwConcurrency,
       spoofHwConcurrencyValue: next.spoofHwConcurrencyValue,
+      stripGoogleAuthCookies: next.stripGoogleAuthCookies,
+      spoofScreen: next.spoofScreen,
+      spoofScreenPreset: next.spoofScreenPreset,
+      spoofColorScheme: next.spoofColorScheme,
+      spoofRender: next.spoofRender,
     });
     void applyMergedSpoof()
       .then(() => sendResponse({ ok: true, state: publicState() }))
@@ -212,10 +225,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     broadcast();
     return true;
   }
+  if (msg.type === 'SET_ICON_THEME') {
+    const next = ICON_THEMES.includes(msg.theme) ? msg.theme : DEFAULT_ICON_THEME;
+    state.iconTheme = next;
+    chrome.storage.local.set({ iconTheme: next });
+    updateActionIcon(true);
+    broadcast();
+    sendResponse({ ok: true, theme: next, state: publicState() });
+    return;
+  }
+  if (msg.type === 'SET_SHOW_THROUGHPUT') {
+    state.showThroughput = Boolean(msg.showThroughput ?? msg.on);
+    chrome.storage.local.set({ showThroughput: state.showThroughput });
+    updateActionIcon(true);
+    broadcast();
+    sendResponse({ ok: true, showThroughput: state.showThroughput, state: publicState() });
+    return;
+  }
 });
 
 chrome.storage.local.get(
-  { verboseLogs: false, verboseLogsV2: false, ...DEFAULT_SPOOF_SETTINGS },
+  { verboseLogs: false, verboseLogsV2: false, iconTheme: DEFAULT_ICON_THEME, showThroughput: false, ...DEFAULT_SPOOF_SETTINGS },
   (stored) => {
     if (!stored.verboseLogsV2) {
       chrome.storage.local.set({ verboseLogs: false, verboseLogsV2: true });
@@ -223,10 +253,33 @@ chrome.storage.local.get(
     } else {
       state.verboseLogs = Boolean(stored.verboseLogs);
     }
+    if (stored?.iconTheme && ICON_THEMES.includes(stored.iconTheme)) {
+      state.iconTheme = stored.iconTheme;
+    }
+    state.showThroughput = Boolean(stored?.showThroughput);
     state.spoofSettings = normalizeSpoofSettings(stored);
     void applyMergedSpoof();
+    updateActionIcon(true);
   },
 );
+
+chrome.storage?.onChanged?.addListener?.((changes, area) => {
+  if (area === 'local') {
+    if (changes.iconTheme) {
+      const next = changes.iconTheme.newValue;
+      if (ICON_THEMES.includes(next)) {
+        state.iconTheme = next;
+        updateActionIcon(true);
+        broadcast();
+      }
+    }
+    if (changes.showThroughput !== undefined) {
+      state.showThroughput = Boolean(changes.showThroughput.newValue);
+      updateActionIcon(true);
+      broadcast();
+    }
+  }
+});
 state.flags.blockWebrtc = true;
 void setBlockWebrtc(true);
 
@@ -353,7 +406,6 @@ function applyMergedSpoof() {
     geo: state.exitGeo || FALLBACK_GEO_PROFILE,
     settings: state.spoofSettings,
     chromeUa: globalThis.navigator?.userAgent || '',
-    token: `${Date.now().toString(36)}`,
   });
   state.spoofProfile = profile;
   return setSpoofProfile(profile);
@@ -544,8 +596,40 @@ function log(line) {
   }
 }
 
+let lastThroughputSample = { time: Date.now(), bytesIn: 0, bytesOut: 0 };
+let currentThroughput = { speedMbps: 0, speedInMbps: 0, speedOutMbps: 0 };
+
+function getThroughputSpeed() {
+  const now = Date.now();
+  const elapsedMs = now - lastThroughputSample.time;
+  if (elapsedMs < 300) {
+    return currentThroughput;
+  }
+  const dt = elapsedMs / 1000;
+  const stats = getInterceptStats();
+  const bytesIn = stats.bytesIn || 0;
+  const bytesOut = stats.bytesOut || 0;
+
+  const deltaIn = Math.max(0, bytesIn - lastThroughputSample.bytesIn);
+  const deltaOut = Math.max(0, bytesOut - lastThroughputSample.bytesOut);
+
+  lastThroughputSample = { time: now, bytesIn, bytesOut };
+
+  const speedInMbps = (deltaIn * 8) / (dt * 1_000_000);
+  const speedOutMbps = (deltaOut * 8) / (dt * 1_000_000);
+  const speedMbps = speedInMbps + speedOutMbps;
+
+  currentThroughput = {
+    speedMbps: Math.round(speedMbps * 100) / 100,
+    speedInMbps: Math.round(speedInMbps * 100) / 100,
+    speedOutMbps: Math.round(speedOutMbps * 100) / 100,
+  };
+  return currentThroughput;
+}
+
 function publicState() {
   const count = state.interceptTabCount || 0;
+  const throughput = getThroughputSpeed();
   return {
     status: state.status,
     error: state.error,
@@ -559,6 +643,9 @@ function publicState() {
     interceptStats: getInterceptStats(),
     events: state.events.slice(-80),
     logs: state.logs.slice(-80),
+    iconTheme: state.iconTheme || DEFAULT_ICON_THEME,
+    showThroughput: Boolean(state.showThroughput),
+    throughput,
     spoof: {
       exitLookup: { ...state.exitGeoLookup, attempts: state.exitGeoLookup.attempts.map((attempt) => ({ ...attempt })) },
       browserGeo: {
@@ -583,7 +670,63 @@ function publicState() {
   };
 }
 
+let iconFrame = 0;
+let iconAnimationTimer = null;
+let lastRenderedStateKey = null;
+
+function updateActionIcon(force = false) {
+  if (typeof chrome === 'undefined' || !chrome.action?.setIcon) return;
+
+  const currentTheme = state.iconTheme || DEFAULT_ICON_THEME;
+  const snapshot = publicState();
+  const resolved = resolveIconState(snapshot, iconFrame);
+  const throughput = getThroughputSpeed();
+  const stateKey = `${currentTheme}:${resolved.state}:${resolved.progress}:${resolved.inFlight > 0 ? 'traffic' : 'idle'}:${state.showThroughput ? 'tp' : 'pct'}:${iconFrame}`;
+
+  if (!force && lastRenderedStateKey === stateKey && resolved.state !== 'connecting' && resolved.state !== 'active') {
+    return;
+  }
+  lastRenderedStateKey = stateKey;
+
+  try {
+    const iconData = generateIconData(currentTheme, resolved.state, {
+      frame: iconFrame,
+      loadPercent: resolved.loadPercent,
+      progress: resolved.progress,
+      flagCount: resolved.flagCount,
+    });
+    chrome.action.setIcon({ imageData: iconData }).catch(() => {});
+
+    const badge = getThemeBadge(currentTheme, resolved.state, {
+      inFlight: resolved.inFlight,
+      loadPercent: resolved.loadPercent,
+      showThroughput: state.showThroughput,
+      speedMbps: throughput.speedMbps,
+    });
+    chrome.action.setBadgeText({ text: badge.text || '' }).catch(() => {});
+    if (badge.color && badge.color !== '#00000000') {
+      chrome.action.setBadgeBackgroundColor({ color: badge.color }).catch(() => {});
+    }
+  } catch {
+    // Canvas or OffscreenCanvas may not be supported in some environments
+  }
+
+  // Manage animated loading timer only during 'connecting' for themes that use sweep animations
+  const shouldAnimate = resolved.state === 'connecting' && currentTheme !== 'wormhole';
+  if (shouldAnimate && !iconAnimationTimer) {
+    iconAnimationTimer = setInterval(() => {
+      iconFrame = (iconFrame + 1) % 64;
+      updateActionIcon(true);
+    }, 320);
+  } else if (!shouldAnimate && iconAnimationTimer) {
+    clearInterval(iconAnimationTimer);
+    iconAnimationTimer = null;
+    iconFrame = 0;
+  }
+}
+
 function broadcast() {
+  updateActionIcon();
   chrome.runtime.sendMessage({ source: 'sw', type: 'STATE', state: publicState() }).catch(() => {});
 }
 

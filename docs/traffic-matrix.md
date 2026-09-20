@@ -17,8 +17,12 @@ What tab traffic this product intends to carry. Stage 3 fills **works / partial 
 | Timezone | required spoof | CDP `Emulation.setTimezoneOverride` | **spoofed** to exit IANA zone |
 | Language / `Accept-Language` | optional spoof | Settings toggle; CDP locale + header rewrite + `navigator.language` | **spoofed** when enabled (default on, auto from exit) |
 | UA / Client Hints | optional spoof | Settings toggle; CDP `setUserAgentOverride` + `Sec-CH-UA*` rewrite + `userAgentData` | **spoofed** when enabled (default Chrome Windows, real Chrome major) |
-| `hardwareConcurrency` | optional spoof | Settings toggle; JS `defineProperty` | **spoofed** when enabled (default 8) |
-| Google account cookies | required strip | Drop **pre-intercept** `SID`/`NID`/`__Secure-*PSID*` values on `*.google.com`; cookies Set-Cookie'd during Sign-In pass | **stripped** (old profile session only) |
+| `hardwareConcurrency` | optional spoof | Settings toggle; CDP `Emulation.setHardwareConcurrencyOverride` + JS getter | **spoofed** when enabled (default 8) |
+| `deviceMemory` / `maxTouchPoints` / `vendor` | optional spoof | JS getters aligned with UA preset + hw | **spoofed** with UA/hw (desktop `maxTouchPoints=0`, `deviceMemory` clamped to 8) |
+| Screen / DPR | optional spoof | Settings toggle (default off); CDP `setDeviceMetricsOverride` + `screen.*` | **real window** by default; **emulated** when enabled (resizes the tab) |
+| `prefers-color-scheme` | optional spoof | Settings select (default system); CDP `setEmulatedMedia` | **system** by default |
+| Canvas / WebGL / Audio / fonts | optional spoof | Settings **Render fingerprint** (default on); seed is a hash of Settings (UA/hw/screen/locale/color), not Connect time; WebGL vendor/renderer follow UA preset; extra fonts hidden | **spoofed** when enabled; same settings → same seed every Connect; wrappers are detectable; rasterization is still this GPU |
+| Google account cookies | optional strip | Settings toggle **Fresh Google session** (default off). When on, drop **pre-intercept** `SID`/`NID`/`__Secure-*PSID*` values on `*.google.com`; cookies Set-Cookie'd during Sign-In pass | **passed through** by default; **stripped** when the toggle is on |
 | DNS | partial | Tunnel CONNECT sends destination hostname to server; `networkPredictionEnabled=false` suppresses browser prediction | **partial**: carrier DNS remains local; no system DNS routing or OS firewall |
 | `chrome://`, extension pages | not needed | debugger cannot attach | n/a |
 
@@ -34,7 +38,7 @@ What tab traffic this product intends to carry. Stage 3 fills **works / partial 
 - Large bodies buffered in the extension (32 MiB cap)
 - WebRTC and fingerprint stubs are target-scoped. Global WebRTC policy is unchanged to keep Telemost working. Only network prediction and native geolocation permissions are changed for the profile; explicit Disconnect clears this extension's overrides.
 - Offscreen Telemost UA/ICE is unchanged (carrier path)
-- Google auth cookies (`SID`, `NID`, `__Secure-*PSID*`, …) are not forwarded on intercepted Google hosts; sign-in must happen through the tunnel if a Google session is needed
+- Google auth cookies (`SID`, `NID`, `__Secure-*PSID*`, …) are forwarded by default so Connect/Disconnect keeps the current login. **Fresh Google session** (default off) snapshots those values at Connect and omits them on Google hosts; sign-in must then happen through the tunnel, and the next Connect with the toggle still on logs you out again
 
 ## Network guard and limits
 

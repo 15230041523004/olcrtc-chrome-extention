@@ -22,9 +22,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Keep a single public release: drop superseded tags, then recreate this one.
+          gh release delete v0.2.0 --cleanup-tag --yes || true
+          gh release delete "$GITHUB_REF_NAME" --yes || true
           gh release create "$GITHUB_REF_NAME" dist/*.zip \
             --title "olcRTC Research $GITHUB_REF_NAME" \
-            --notes "First packaged Chrome extension for this research prototype.
+            --notes "Packaged Chrome extension for this research prototype.
 
           Unzip olcrtc-chrome-extension-*.zip and load the folder that contains manifest.json via chrome://extensions (Developer mode → Load unpacked).
 
