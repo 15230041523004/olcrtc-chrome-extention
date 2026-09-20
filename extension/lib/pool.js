@@ -84,6 +84,11 @@ export class ConnPool {
     return n;
   }
 
+  count(key) {
+    this.evictExpired();
+    return this.idle.get(key)?.length || 0;
+  }
+
   evictExpired() {
     const t = this.now();
     for (const [key, list] of this.idle) {
@@ -200,8 +205,9 @@ export class HostGate {
     this.queue = new Map();
   }
 
-  async run(key, fn) {
-    while ((this.running.get(key) || 0) >= this.concurrency) {
+  async run(key, fn, maxConcurrency = null) {
+    const limit = maxConcurrency != null ? maxConcurrency : this.concurrency;
+    while ((this.running.get(key) || 0) >= limit) {
       await new Promise((resolve) => {
         let q = this.queue.get(key);
         if (!q) {

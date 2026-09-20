@@ -68,6 +68,16 @@ export class Tunnel {
     this.recvFrom = new Map();
     this.stats = { samples: 0, datagrams: 0, queueDrops: 0, controlIn: 0, controlAcks: 0, wireCrcErrors: 0 };
     this.handshakeRetryTimer = null;
+    this.pool = new ConnPool({
+      maxPerHost: CONFIG.poolMaxPerHost,
+      maxTotal: CONFIG.poolMaxTotal,
+      idleMs: CONFIG.poolIdleMs,
+      log: (m) => this.log(m),
+    });
+    this.mediaSem = new Semaphore(CONFIG.mediaSemConcurrency || 16, (m) => this.log(`media.${m}`));
+    this.subSem = new Semaphore(CONFIG.subSemConcurrency || 48, (m) => this.log(`sub.${m}`));
+    this.hostGate = new HostGate(CONFIG.hostGateConcurrency || 8);
+    this.imageGate = new HostGate(CONFIG.imageGateConcurrency || 6);
   }
 
   async start(cfg) {
@@ -103,6 +113,7 @@ export class Tunnel {
     this.unackedPings = 0;
     this.consecutiveConnectTimeouts = 0;
     this.warmHosts = new Set();
+    this.prewarmingKeys = new Set();
     this.timer = setInterval(() => {
       this.data.update();
       this.control.update();
@@ -121,8 +132,9 @@ export class Tunnel {
     this.controlOut.length = 0;
     this.pool?.clear();
     this.warmHosts?.clear();
-    this.dataSmux?.closeAll();
-    this.smux?.closeAll();
+    this.prewarmingKeys?.clear();
+    this.dataSmux?.closeAll?.();
+    this.smux?.closeAll?.();
     this.dataSmux = null;
     this.dataSmuxReady = new Promise((resolve) => {
       this._resolveDataSmux = resolve;
@@ -137,6 +149,7 @@ export class Tunnel {
     clearInterval(this.pingTimer);
     clearTimeout(this.handshakeTimer);
     clearTimeout(this.handshakeRetryTimer);
+    this.prewarmingKeys?.clear();
 
     this.handshakeOk = false;
     this.pingOk = false;
@@ -521,6 +534,44 @@ export class Tunnel {
     }
   }
 
+  async prewarmHost(key, hostname, port, https) {
+    if (!this.ready || !this.dataSmux || this.reconnecting) return;
+    if (this.pool.count(key) >= 2) return;
+    if (!this.prewarmingKeys) this.prewarmingKeys = new Set();
+    if (this.prewarmingKeys.has(key)) return;
+
+    this.prewarmingKeys.add(key);
+    this.log(`pool.prewarm.start ${key}`);
+    let tcp = null;
+    let stream = null;
+    try {
+      tcp = await this.connectTCP(hostname, port);
+      tcp = new BufferedStream(tcp);
+      if (https) {
+        stream = await withTimeout(
+          wrapTls(tcp, { sni: hostname, log: (m) => this.log(m) }),
+          TLS_TIMEOUT_MS,
+          'tls',
+        );
+        stream = new BufferedStream(stream);
+      } else {
+        stream = tcp;
+      }
+      if (!this.ready || !this.dataSmux || this.reconnecting) {
+        stream.close();
+        return;
+      }
+      this.pool.put(key, stream);
+      this.log(`pool.prewarm.ok ${key} idle=${this.pool.totalIdle()}`);
+    } catch (err) {
+      stream?.close();
+      tcp?.close();
+      this.log(`pool.prewarm.fail ${key} — ${err.message}`);
+    } finally {
+      this.prewarmingKeys.delete(key);
+    }
+  }
+
   async httpProxy(req) {
     const parsed = new URL(req.url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -533,12 +584,21 @@ export class Tunnel {
     const isImage = !isMedia && isImageUrl(parsed.pathname, parsed.hostname);
     const sem = isMedia ? this.mediaSem : this.subSem;
     const gate = isImage ? this.imageGate : this.hostGate;
+
+    // Proactively pre-warm connection for active media streaming hosts
+    if (isMedia && this.pool.count(key) <= 1) {
+      void this.prewarmHost(key, parsed.hostname, port, https);
+    }
+
     await sem.acquire();
     try {
       // Warm-socket fast-path: if an idle keep-alive socket is already available in the pool,
       // take it immediately and execute in parallel, bypassing the host gate queue.
       const warmStream = this.pool.take(key);
       if (warmStream) {
+        if (isMedia && this.pool.count(key) < 2) {
+          void this.prewarmHost(key, parsed.hostname, port, https);
+        }
         try {
           return await this.httpProxyInner(req, {
             parsed,
@@ -568,8 +628,11 @@ export class Tunnel {
           throw err;
         }
       }
-      return await gate.run(key, () =>
-        this.httpProxyInner(req, { parsed, https, port, key, isMedia, inGate: true }),
+      const maxGateConcurrency = isImage && this.mediaSem.n > 0 ? Math.min(2, this.imageGate.concurrency) : null;
+      return await gate.run(
+        key,
+        () => this.httpProxyInner(req, { parsed, https, port, key, isMedia, inGate: true }),
+        maxGateConcurrency,
       );
     } finally {
       sem.release();
@@ -629,7 +692,7 @@ export class Tunnel {
       stream.write(wire);
       const res = await readHttpResponse(stream, {
         method: method || 'GET',
-        headerTimeoutMs: fromPool ? 3_000 : HTTP_HEADER_TIMEOUT_MS,
+        headerTimeoutMs: HTTP_HEADER_TIMEOUT_MS,
         idleTimeoutMs: HTTP_BODY_IDLE_MS,
         isMedia,
         onProgress: (n) => this.log(`http.body n=${n}`),
@@ -658,6 +721,9 @@ export class Tunnel {
         this.log(
           `pool.skip ${key} body=${res.body.length} leftover=${res.leftover?.length || 0} keep=${res.keepAlive}`,
         );
+        if (isMedia || this.warmHosts.has(key)) {
+          void this.prewarmHost(key, parsed.hostname, port, https);
+        }
       }
       let out = res;
       try {
@@ -767,7 +833,6 @@ function isStalePoolError(err) {
   const msg = String(err?.message || err);
   return (
     msg.includes('connection closed before headers') ||
-    msg.includes('http header timeout got=0') ||
     msg.includes('eof during handshake') ||
     msg.includes('tls: eof')
   );

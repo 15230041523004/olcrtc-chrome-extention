@@ -72,9 +72,10 @@ async function run() {
   await pause(500);
   const cleanAfter = await outbound(sender);
   const cleanHintWorks = cleanAfter[0].keyFramesEncoded > cleanBefore[0].keyFramesEncoded && cleanAfter[0].pliCount === cleanBefore[0].pliCount;
-  receiverWorker.postMessage('tunnel');
   senderWorker.postMessage({ type: 'setMode', mode: 'tunnel' });
   senderWorker.postMessage({ type: 'mediaReady' });
+  await pause(100);
+  receiverWorker.postMessage('tunnel');
   await pause(2500);
   const before = await outbound(sender);
   stopMonitor = monitorPublisher(pub, sender, (line) => logs.push(line), () => true);

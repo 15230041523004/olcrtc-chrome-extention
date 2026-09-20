@@ -57,11 +57,18 @@ export function decodeChunked(buf, max = getMaxBodyBytes()) {
     if (!Number.isFinite(size) || size < 0) throw new Error('http: bad chunk size');
     offset += nl + 2;
     if (size === 0) {
-      const end = latin.decode(buf.subarray(offset, offset + 2));
-      if (end !== '\r\n' && buf.length - offset < 2) {
-        return { body: concatParts(parts), rest: buf.subarray(offset - (nl + 2)), done: false };
+      if (buf.length - offset >= 2) {
+        const end = latin.decode(buf.subarray(offset, offset + 2));
+        if (end === '\r\n') {
+          return { body: concatParts(parts), rest: buf.subarray(offset + 2), done: true };
+        }
       }
-      return { body: concatParts(parts), rest: buf.subarray(offset + 2), done: true };
+      const rem = latin.decode(buf.subarray(offset));
+      const trailerEnd = rem.indexOf('\r\n\r\n');
+      if (trailerEnd >= 0) {
+        return { body: concatParts(parts), rest: buf.subarray(offset + trailerEnd + 4), done: true };
+      }
+      return { body: concatParts(parts), rest: buf.subarray(offset - (nl + 2)), done: false };
     }
     if (offset + size + 2 > buf.length) {
       return { body: concatParts(parts), rest: buf.subarray(offset - (nl + 2)), done: false };
@@ -212,9 +219,10 @@ export async function readHttpResponse(stream, opts = {}) {
         let more;
         try {
           // If this is an uncompressed media stream (like YouTube SABR/ALR) and we already have data,
-          // wait at most 1500ms for more data before resolving the chunk.
+          // wait at most 600ms (or 1000ms if small) for more data before resolving the chunk.
           // For compressed responses (like gzipped JS/CSS/HTML), NEVER early-idle, or decompression will fail!
-          const chunkIdleMs = canEarlyIdle && dec.body && dec.body.length > 0 ? Math.min(1500, idleMs) : idleMs;
+          const maxMediaIdle = dec.body && dec.body.length >= 64 * 1024 ? 600 : 1000;
+          const chunkIdleMs = canEarlyIdle && dec.body && dec.body.length > 0 ? Math.min(maxMediaIdle, idleMs) : idleMs;
           more = await timedRead(stream, HTTP_READ_CHUNK_SIZE, {
             deadline: bodyDeadline,
             idleMs: chunkIdleMs,

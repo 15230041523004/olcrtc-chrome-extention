@@ -135,9 +135,26 @@ test('readHttpResponse header timeout', async () => {
 
 test('decodes chunked body', () => {
   const raw = new TextEncoder().encode('5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n');
-  const { body, done } = decodeChunked(raw);
+  const { body, done, rest } = decodeChunked(raw);
   assert.equal(done, true);
   assert.equal(new TextDecoder().decode(body), 'hello world');
+  assert.equal(rest.length, 0);
+});
+
+test('decodes chunked body with RFC 9112 trailers', () => {
+  const raw = new TextEncoder().encode(
+    '5\r\nhello\r\n6\r\n world\r\n0\r\nExpires: Wed, 21 Oct 2026 07:28:00 GMT\r\nX-Checksum: abc123\r\n\r\nNEXT',
+  );
+  const { body, done, rest } = decodeChunked(raw);
+  assert.equal(done, true);
+  assert.equal(new TextDecoder().decode(body), 'hello world');
+  assert.equal(new TextDecoder().decode(rest), 'NEXT');
+});
+
+test('chunked body with partial trailer waits for trailer completion', () => {
+  const raw = new TextEncoder().encode('5\r\nhello\r\n0\r\nExpires: Wed');
+  const { body, done } = decodeChunked(raw);
+  assert.equal(done, false);
 });
 
 test('parseHttpHeaders sees chunked and keep-alive', () => {

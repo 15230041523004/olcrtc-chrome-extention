@@ -300,4 +300,71 @@ test('tunnel start creates ConnPool with configured poolMaxPerHost (32) and pool
   tunnel.stop();
 });
 
+test('prewarmHost establishes connection and stores warm stream in pool', async () => {
+  const { tunnel, logs } = readyTunnel();
+  tunnel.dataSmux = { openStream() { return { sid: 1, closed: false, close() {} }; }, closeAll() {} };
+
+  tunnel.connectTCP = async (host, port) => ({
+    closed: false,
+    read: async () => new Uint8Array(0),
+    write() {},
+    close() {},
+  });
+
+  const key = 'rr1---sn-ajab55-5o.googlevideo.com:443:tcp';
+  await tunnel.prewarmHost(key, 'rr1---sn-ajab55-5o.googlevideo.com', 443, false);
+
+  assert.equal(tunnel.pool.count(key), 1);
+  assert.ok(logs.some((l) => l.includes('pool.prewarm.start')));
+  assert.ok(logs.some((l) => l.includes('pool.prewarm.ok')));
+
+  // Second call when already at 1 should be allowed up to 2
+  await tunnel.prewarmHost(key, 'rr1---sn-ajab55-5o.googlevideo.com', 443, false);
+  assert.equal(tunnel.pool.count(key), 2);
+
+  // Third call should be skipped because count is >= 2
+  await tunnel.prewarmHost(key, 'rr1---sn-ajab55-5o.googlevideo.com', 443, false);
+  assert.equal(tunnel.pool.count(key), 2);
+
+  tunnel.stop();
+});
+
+test('prewarmHost deduplicates concurrent in-flight calls for same key', async () => {
+  const { tunnel } = readyTunnel();
+  tunnel.dataSmux = { openStream() { return { sid: 1, closed: false, close() {} }; }, closeAll() {} };
+  let connects = 0;
+  tunnel.connectTCP = async () => {
+    connects++;
+    await new Promise((r) => setTimeout(r, 20));
+    return { closed: false, read: async () => new Uint8Array(0), write() {}, close() {} };
+  };
+
+  const key = 'media.cdn.net:80:tcp';
+  const p1 = tunnel.prewarmHost(key, 'media.cdn.net', 80, false);
+  const p2 = tunnel.prewarmHost(key, 'media.cdn.net', 80, false);
+  await Promise.all([p1, p2]);
+
+  assert.equal(connects, 1, 'concurrent prewarm for same key must be deduplicated');
+  assert.equal(tunnel.pool.count(key), 1);
+  tunnel.stop();
+});
+
+test('httpProxy proactively triggers prewarmHost for media URLs when pool has no spare socket', async () => {
+  const { tunnel } = readyTunnel();
+  tunnel.dataSmux = { openStream() { return { sid: 1, closed: false, close() {} }; }, closeAll() {} };
+  const prewarmed = [];
+  tunnel.prewarmHost = async (k) => { prewarmed.push(k); };
+  tunnel.httpProxyInner = async () => ({ status: 200, body: new Uint8Array(0) });
+
+  await tunnel.httpProxy({
+    url: 'https://rr1---sn-ax816n-aixe.googlevideo.com/videoplayback?expire=123',
+    method: 'POST',
+    headers: {},
+  });
+
+  assert.ok(prewarmed.some((k) => k.includes('googlevideo.com')), 'media request must trigger prewarmHost');
+  tunnel.stop();
+});
+
+
 

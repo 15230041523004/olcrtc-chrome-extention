@@ -196,3 +196,37 @@ test('HostGate(2) allows two concurrent runs and queues the third', async () => 
   assert.equal(await p2, 'p2');
   assert.deepEqual(events, ['p1-start', 'p2-start', 'p1-end', 'p3-run', 'p2-end']);
 });
+
+test('ConnPool.count returns exact idle count for key and evicts expired', () => {
+  let t = 1000;
+  const pool = new ConnPool({ idleMs: 50, now: () => t });
+  const key = 'h:443:tls';
+  assert.equal(pool.count(key), 0);
+  pool.put(key, mockStream());
+  pool.put(key, mockStream());
+  assert.equal(pool.count(key), 2);
+  t += 60; // expire
+  assert.equal(pool.count(key), 0);
+});
+
+test('HostGate.run respects maxConcurrency override for throttled image downloads', async () => {
+  const gate = new HostGate(6);
+  const events = [];
+  let release1;
+  const p1 = gate.run('img-host', () => new Promise((r) => {
+    events.push('p1-start');
+    release1 = () => { events.push('p1-end'); r('p1'); };
+  }), 1); // limit to 1
+  const p2 = gate.run('img-host', async () => {
+    events.push('p2-run');
+    return 'p2';
+  }, 1);
+
+  for (let i = 0; i < 10 && !release1; i++) await Promise.resolve();
+  assert.deepEqual(events, ['p1-start']);
+  release1();
+  assert.equal(await p1, 'p1');
+  assert.equal(await p2, 'p2');
+  assert.deepEqual(events, ['p1-start', 'p1-end', 'p2-run']);
+});
+

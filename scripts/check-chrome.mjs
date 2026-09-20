@@ -12,13 +12,18 @@ await mkdir(scratch, { recursive: true });
 const profile = await mkdtemp(path.join(scratch, 'chrome-loopback-'));
 const server = createServer(async (req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
-  if (!/^\/(?:tests\/(?:browser|helpers)\/[\w.-]+\.(?:js|html)|extension\/(?:lib\/[\w.-]+\.js|transform-worker\.js))$/.test(pathname)) {
+  if (!/^\/(?:tests\/(?:browser|helpers)\/[\w.-]+\.(?:js|html)|extension\/(?:lib\/[\w./-]+\.(?:js|wasm)|transform-worker\.js))$/.test(pathname)) {
     res.writeHead(404).end();
     return;
   }
   try {
     const content = await readFile(path.join(root, pathname.slice(1)));
-    res.setHeader('Content-Type', pathname.endsWith('.js') ? 'application/javascript' : 'text/html; charset=utf-8');
+    const ct = pathname.endsWith('.js')
+      ? 'application/javascript'
+      : pathname.endsWith('.wasm')
+        ? 'application/wasm'
+        : 'text/html; charset=utf-8';
+    res.setHeader('Content-Type', ct);
     res.end(content);
   } catch {
     res.writeHead(404).end();

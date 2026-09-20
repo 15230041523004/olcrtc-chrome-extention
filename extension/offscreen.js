@@ -101,7 +101,7 @@ async function startSession(config) {
   emit('log', `auth.ok host=${wsHost(creds.mediaServerURL)}`);
   emit('event', { type: 'auth.ok', host: wsHost(creds.mediaServerURL), apiRoomId: creds.roomID });
 
-  dummyStream = startDummyVideo(config.vp8?.fps || 30);
+  dummyStream = startDummyVideo(config.vp8?.fps || 60);
   const videoTrack = dummyStream.getVideoTracks()[0];
   if (!videoTrack) throw new Error('canvas.captureStream produced no video track');
 
@@ -136,6 +136,16 @@ async function startSession(config) {
       },
       onPublisherSender: (pc, sender) => {
         sender.transform = new RTCRtpScriptTransform(worker, { name: 'sender', mode });
+        try {
+          const params = sender.getParameters?.();
+          if (params?.encodings?.length) {
+            for (const enc of params.encodings) {
+              enc.maxBitrate = 120_000_000;
+              enc.maxFramerate = 60;
+            }
+            sender.setParameters(params).catch(() => {});
+          }
+        } catch {}
         stopPublisherMonitor = monitorPublisher(pc, sender, (line) => emit('log', line), () => mode === 'tunnel');
         emit('log', 'sender.transform.attached');
         emit('event', { type: 'sender.transform.attached' });
@@ -231,6 +241,7 @@ function setMode(next) {
 }
 
 function startDummyVideo(fps) {
+  fps = Number(fps) || 60;
   const canvas = document.getElementById('dummy');
   const ctx = canvas.getContext('2d', { alpha: false });
   let t = 0;
@@ -239,7 +250,7 @@ function startDummyVideo(fps) {
     ctx.fillStyle = `rgb(${32 + (t % 48)}, ${16 + (t % 32)}, 40)`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#9cf';
-    ctx.fillRect(t % 16, (t * 3) % 16, 3, 3);
+    ctx.fillRect(t % canvas.width, (t * 3) % canvas.height, 3, 3);
   };
   paint();
   dummyTimer = setInterval(paint, Math.max(8, Math.floor(1000 / fps)));

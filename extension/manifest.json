@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "olcRTC Tunnel (research)",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "olcRTC Research: Experimental WebRTC video-carrier data encapsulation protocol research and benchmarking.",
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'"

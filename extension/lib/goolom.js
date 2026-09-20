@@ -1,4 +1,4 @@
-import { preferVp8OnTransceiver, preferVp8Sdp, isIPv4IceCandidate } from './sdp-vp8.js';
+import { preferVp8OnTransceiver, preferVp8Sdp, enhanceSdpBandwidth, isIPv4IceCandidate } from './sdp-vp8.js';
 
 const UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0';
 const DEFAULT_STUN = 'stun:stun.rtc.yandex.net:3478';
@@ -383,13 +383,18 @@ export class GoolomSession {
     const sdp = offer.sdp;
     const pcSeq = Number(offer.pcSeq) || 0;
     await this.sub.setRemoteDescription({ type: 'offer', sdp });
-    const answer = await this.sub.createAnswer();
-    await this.sub.setLocalDescription(answer);
+    let answer = await this.sub.createAnswer();
+    const enhancedAnswerSdp = enhanceSdpBandwidth(preferVp8Sdp(answer.sdp));
+    try {
+      await this.sub.setLocalDescription({ type: 'answer', sdp: enhancedAnswerSdp });
+    } catch {
+      await this.sub.setLocalDescription(answer);
+    }
     this.sendJson({
       uid: crypto.randomUUID(),
       subscriberSdpAnswer: {
         pcSeq,
-        sdp: this.sub.localDescription.sdp,
+        sdp: this.sub.localDescription.sdp || enhancedAnswerSdp,
       },
     });
     this.sendAck(uid);
@@ -402,13 +407,18 @@ export class GoolomSession {
 
     await sleep(PUB_OFFER_DELAY_MS);
     let pubOffer = await this.pub.createOffer();
-    pubOffer = { type: 'offer', sdp: preferVp8Sdp(pubOffer.sdp) };
-    await this.pub.setLocalDescription(pubOffer);
+    const enhancedPubSdp = enhanceSdpBandwidth(preferVp8Sdp(pubOffer.sdp));
+    pubOffer = { type: 'offer', sdp: enhancedPubSdp };
+    try {
+      await this.pub.setLocalDescription(pubOffer);
+    } catch {
+      await this.pub.setLocalDescription(await this.pub.createOffer());
+    }
     this.sendJson({
       uid: crypto.randomUUID(),
       publisherSdpOffer: {
         pcSeq: 1,
-        sdp: this.pub.localDescription.sdp,
+        sdp: this.pub.localDescription.sdp || enhancedPubSdp,
         tracks: this.publisherTrackDescriptions(),
       },
     });
@@ -439,7 +449,10 @@ export class GoolomSession {
   }
 
   async sendSetSlots() {
-    const slots = Array.from({ length: 8 }, () => ({ width: 1280, height: 720 }));
+    const slots = Array.from({ length: 8 }, (_, i) => ({
+      width: i === 0 ? 3840 : 1920,
+      height: i === 0 ? 2160 : 1080,
+    }));
     this.sendJson({
       uid: crypto.randomUUID(),
       setSlots: {

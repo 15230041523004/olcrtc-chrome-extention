@@ -4,6 +4,10 @@
 export async function requestPublisherKeyframe(sender) {
   const parameters = sender.getParameters();
   if (!parameters.encodings?.length) return false; // negotiation is not ready
+  for (const enc of parameters.encodings) {
+    enc.maxBitrate = 120_000_000;
+    enc.maxFramerate = 60;
+  }
   await sender.setParameters(parameters, {
     encodingOptions: parameters.encodings.map(() => ({ keyFrame: true })),
   });
