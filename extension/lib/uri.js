@@ -57,8 +57,8 @@ export function parseOlcrtcUri(raw) {
     throw new Error('crypto key must be 64 hex characters');
   }
 
-  const fps = intParam(params, 'vp8-fps', 60);
-  const batch = intParam(params, 'vp8-batch', 64);
+  const fps = intParam(params, 'vp8-fps', 120);
+  const batch = intParam(params, 'vp8-batch', 128);
 
   const roomUrl = normalizeTelemostRoom(roomRaw);
   return {

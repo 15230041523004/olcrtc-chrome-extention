@@ -101,7 +101,7 @@ async function startSession(config) {
   emit('log', `auth.ok host=${wsHost(creds.mediaServerURL)}`);
   emit('event', { type: 'auth.ok', host: wsHost(creds.mediaServerURL), apiRoomId: creds.roomID });
 
-  dummyStream = startDummyVideo(config.vp8?.fps || 60);
+  dummyStream = startDummyVideo(config.vp8?.fps || 120);
   const videoTrack = dummyStream.getVideoTracks()[0];
   if (!videoTrack) throw new Error('canvas.captureStream produced no video track');
 

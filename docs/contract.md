@@ -23,7 +23,7 @@ olcrtc://telemost?vp8channel<vp8-fps=30&vp8-batch=64>@<RoomID>#<64-hex-key>$<com
 |---|---|
 | `telemost` | `auth.provider` |
 | `vp8channel` | `net.transport` |
-| `<vp8-fps>` / `<vp8-batch>` | `vp8.fps` / `vp8.batch_size` (omit the `<>` block for defaults 30 / 64) |
+| `<vp8-fps>` / `<vp8-batch>` | `vp8.fps` / `vp8.batch_size` (omit the `<>` block for defaults 120 / 128) |
 | `@RoomID` | `room.id` — Telemost hash or full `https://telemost.yandex.ru/j/<id>` |
 | `#key` | `crypto.key` — 32 bytes as 64 hex chars |
 | `$comment` | UI only |
