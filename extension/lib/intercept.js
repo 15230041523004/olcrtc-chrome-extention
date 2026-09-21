@@ -23,6 +23,7 @@ const reloadedAfterAttach = new Set();
 const pendingNavigations = new Set();
 const ATTACH_RETRIES = 3;
 const ATTACH_RETRY_MS = [50, 100, 150];
+const SETUP_TIMEOUT_MS = 3000;
 const RECOVER_GAP_MS = 200;
 let recoverChain = Promise.resolve();
 let interceptActive = false;
@@ -39,6 +40,38 @@ let spoofProfile = buildSpoofProfile({
   chromeMajor: 141,
   token: 'init',
 });
+let spoofExpression = '';
+const setupTabs = new Set();
+const deferredPaused = [];
+const deferredEval = [];
+
+function refreshSpoofExpression() {
+  spoofExpression = `${blockWebrtc ? WEBRTC_BLOCK_SOURCE : ''}\n${fingerprintSpoofSource(spoofProfile)}`;
+}
+
+function flushTabDeferred(tabId) {
+  const paused = [];
+  const evals = [];
+  for (let i = deferredPaused.length - 1; i >= 0; i--) {
+    if (deferredPaused[i].source.tabId === tabId) paused.push(deferredPaused.splice(i, 1)[0]);
+  }
+  for (let i = deferredEval.length - 1; i >= 0; i--) {
+    if (deferredEval[i].source.tabId === tabId) evals.push(deferredEval.splice(i, 1)[0]);
+  }
+  if (!paused.length && !evals.length) return;
+  setTimeout(() => {
+    for (const item of evals) runDeferredEval(item);
+    for (const item of paused) void handlePaused(item.source, item.params);
+  }, 0);
+}
+
+function runDeferredEval(item) {
+  chrome.debugger.sendCommand(item.source, 'Runtime.evaluate', {
+    expression: item.expression,
+    contextId: item.contextId,
+  }).catch((err) => onLog(`intercept.context ${err.message}`));
+}
+refreshSpoofExpression();
 
 const cookieCache = new Map(); // origin -> { cookieStr, expiresAt }
 const COOKIE_CACHE_TTL_MS = 5000;
@@ -267,6 +300,7 @@ export function isInterceptActive() {
 
 export async function setBlockWebrtc(on) {
   blockWebrtc = Boolean(on);
+  refreshSpoofExpression();
   onLog(`webrtc.block ${blockWebrtc ? 'on' : 'off'} (active tabs: ${attachedTabs.size})`);
   for (const [id, info] of attachedTabs.entries()) {
     info.webrtcScriptId = await applyWebrtcBlock(id);
@@ -284,6 +318,7 @@ export function getSpoofProfile() {
 export async function setSpoofProfile(profile) {
   const wasOn = spoofProfile?.stripGoogleAuthCookies === true;
   spoofProfile = profile || spoofProfile;
+  refreshSpoofExpression();
   onLog(spoofLogLine(spoofProfile));
   await syncGoogleAuthCookieIsolation(wasOn);
   for (const [id, info] of attachedTabs.entries()) {
@@ -631,48 +666,55 @@ async function tryAttach(id, url, attempt, generation) {
   }
 
   // Register before enabling Fetch: Chrome can immediately emit paused requests.
+  // Hold those pauses until setup finishes so failRequest cannot block Network.enable.
   attachedTabs.set(id, { url, webrtcScriptId: null, spoofScriptId: null });
+  setupTabs.add(id);
   try {
-    await chrome.debugger.sendCommand({ tabId: id }, 'Fetch.enable', {
+    await cdpWithTimeout({ tabId: id }, 'Fetch.enable', {
       patterns: [{ urlPattern: '*', requestStage: 'Request' }],
     });
-    await configureNetworkSession({ tabId: id });
     onLog(`fetch.enable ok tab=${id} attempt=${attempt}`);
+    await configureNetworkSession({ tabId: id });
+
+    const webrtcScriptId = await applyWebrtcBlock(id);
+    const spoofScriptId = await applySpoof(id, null);
+    if ((blockWebrtc && !webrtcScriptId) || !spoofScriptId || attachedTabs.get(id)?.protectionFailed) {
+      await detachTab(id);
+      return { ok: false, fatal: true, reason: 'page protection could not be installed' };
+    }
+    if (generation !== interceptGeneration) {
+      await blockUnattachedTab(id);
+      await detachTab(id);
+      return { ok: false, fatal: true, reason: 'interception stopped' };
+    }
+    attachedTabs.set(id, { url, webrtcScriptId, spoofScriptId });
+    await allowInterceptedTab(id);
+    if (generation !== interceptGeneration) {
+      await blockUnattachedTab(id);
+      await detachTab(id);
+      return { ok: false, fatal: true, reason: 'interception stopped' };
+    }
+    onLog(`intercept.attached tab=${id} total=${attachedTabs.size} url=${url.slice(0, 80)}`);
+    onTabCountChange(attachedTabs.size);
+    await recoverTabAfterAttach(id, url);
+    return { ok: true };
   } catch (err) {
     const msg = String(err?.message || err);
-    onLog(`fetch.enable fail tab=${id} attempt=${attempt} reason=${msg}`);
+    const timedOut = msg.startsWith('timeout ');
+    onLog(`intercept.setup fail tab=${id} attempt=${attempt} reason=${msg}`);
     attachedTabs.delete(id);
     await blockUnattachedTab(id);
     if (weAttached) {
-      try {
-        await chrome.debugger.detach({ tabId: id });
-      } catch {}
+      await Promise.race([
+        chrome.debugger.detach({ tabId: id }).catch(() => {}),
+        sleep(1000),
+      ]);
     }
-    return { ok: false, fatal: false, reason: msg };
+    return { ok: false, fatal: timedOut, reason: msg };
+  } finally {
+    setupTabs.delete(id);
+    flushTabDeferred(id);
   }
-
-  const webrtcScriptId = await applyWebrtcBlock(id);
-  const spoofScriptId = await applySpoof(id, null);
-  if ((blockWebrtc && !webrtcScriptId) || !spoofScriptId || attachedTabs.get(id)?.protectionFailed) {
-    await detachTab(id);
-    return { ok: false, fatal: true, reason: 'page protection could not be installed' };
-  }
-  if (generation !== interceptGeneration) {
-    await blockUnattachedTab(id);
-    await detachTab(id);
-    return { ok: false, fatal: true, reason: 'interception stopped' };
-  }
-  attachedTabs.set(id, { url, webrtcScriptId, spoofScriptId });
-  await allowInterceptedTab(id);
-  if (generation !== interceptGeneration) {
-    await blockUnattachedTab(id);
-    await detachTab(id);
-    return { ok: false, fatal: true, reason: 'interception stopped' };
-  }
-  onLog(`intercept.attached tab=${id} total=${attachedTabs.size} url=${url.slice(0, 80)}`);
-  onTabCountChange(attachedTabs.size);
-  await recoverTabAfterAttach(id, url);
-  return { ok: true };
 }
 
 export async function detachTab(id) {
@@ -680,13 +722,15 @@ export async function detachTab(id) {
   await blockUnattachedTab(id);
   attachedTabs.delete(id);
   forgetChildSessions(id);
+  setupTabs.delete(id);
   if (typeof chrome !== 'undefined' && chrome.debugger) {
-    try {
-      await chrome.debugger.sendCommand({ tabId: id }, 'Fetch.disable');
-    } catch {}
-    try {
-      await chrome.debugger.detach({ tabId: id });
-    } catch {}
+    await Promise.race([
+      (async () => {
+        try { await cdpWithTimeout({ tabId: id }, 'Fetch.disable'); } catch {}
+        try { await chrome.debugger.detach({ tabId: id }); } catch {}
+      })(),
+      sleep(1000),
+    ]);
   }
   onLog(`intercept.detached tab=${id} remaining=${attachedTabs.size}`);
   onTabCountChange(attachedTabs.size);
@@ -849,34 +893,43 @@ if (typeof chrome !== 'undefined' && chrome.debugger) {
 
   chrome.debugger.onEvent?.addListener((source, method, params) => {
     if (!attachedTabs.has(source.tabId)) return;
+    // setAutoAttach does not return until paused children get
+    // Runtime.runIfWaitingForDebugger, so resume them in this turn.
+    // Paused fetches wait until tab setup finishes so they cannot block it.
     if (method === 'Target.attachedToTarget') {
       void attachChildSession(source, params);
     } else if (method === 'Target.detachedFromTarget') {
       childSessions.delete(`${source.tabId}:${params.sessionId}`);
     } else if (method === 'Runtime.executionContextCreated' && params.context?.auxData?.isDefault) {
-      void chrome.debugger.sendCommand(source, 'Runtime.evaluate', {
-        expression: `${blockWebrtc ? WEBRTC_BLOCK_SOURCE : ''}\n${fingerprintSpoofSource(spoofProfile)}`,
-        contextId: params.context.id,
-      }).catch((err) => onLog(`intercept.context ${err.message}`));
+      const item = { source, contextId: params.context.id, expression: spoofExpression };
+      if (setupTabs.has(source.tabId)) deferredEval.push(item);
+      else setTimeout(() => runDeferredEval(item), 0);
     } else if (method === 'Fetch.requestPaused') {
-      void handlePaused(source, params);
+      if (setupTabs.has(source.tabId)) deferredPaused.push({ source, params });
+      else setTimeout(() => { void handlePaused(source, params); }, 0);
     }
   });
 }
 
 async function configureNetworkSession(source) {
-  await chrome.debugger.sendCommand(source, 'Network.enable');
-  await chrome.debugger.sendCommand(source, 'Network.setBypassServiceWorker', { bypass: true });
-  await chrome.debugger.sendCommand(source, 'Network.setCacheDisabled', { cacheDisabled: true });
-  await chrome.debugger.sendCommand(source, 'Runtime.enable');
-  await chrome.debugger.sendCommand(source, 'Target.setAutoAttach', {
-    autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
-    filter: [
-      { type: 'iframe', exclude: false }, { type: 'worker', exclude: false },
-      { type: 'shared_worker', exclude: false }, { type: 'service_worker', exclude: false },
-      { exclude: true },
-    ],
-  });
+  const steps = [
+    ['intercept.net.enable', 'Network.enable'],
+    ['intercept.net.bypass', 'Network.setBypassServiceWorker', { bypass: true }],
+    ['intercept.net.cache', 'Network.setCacheDisabled', { cacheDisabled: true }],
+    ['intercept.runtime.enable', 'Runtime.enable'],
+    ['intercept.autoattach', 'Target.setAutoAttach', {
+      autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+      filter: [
+        { type: 'iframe', exclude: false }, { type: 'worker', exclude: false },
+        { type: 'shared_worker', exclude: false }, { type: 'service_worker', exclude: false },
+        { exclude: true },
+      ],
+    }],
+  ];
+  for (const [label, method, params] of steps) {
+    onLog(`${label} ${targetLabel(source)}`);
+    await cdpWithTimeout(source, method, params);
+  }
 }
 
 function forgetChildSessions(tabId) {
@@ -1386,12 +1439,25 @@ function targetLabel(id) {
   return `tab=${id}`;
 }
 
+function cdpWithTimeout(source, method, params) {
+  let timer;
+  const pending = chrome.debugger.sendCommand(debuggee(source), method, params);
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timeout ${method}`)), SETUP_TIMEOUT_MS);
+  });
+  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function cdpTry(id, method, params) {
   try {
-    return await chrome.debugger.sendCommand(debuggee(id), method, params);
+    return await cdpWithTimeout(id, method, params);
   } catch (err) {
     if (method === 'Emulation.setLocaleOverride' && err.message?.includes('Another locale override')) {
       return null;
+    }
+    if (String(err?.message || err).startsWith('timeout ')) {
+      onLog(`spoof.timeout ${method} ${targetLabel(id)}`);
+      throw err;
     }
     onLog(`spoof.${method} ${targetLabel(id)}: ${err.message}`);
     return null;
@@ -1458,19 +1524,17 @@ async function applySpoof(id, prevScriptId, hasPage = true) {
 
     if (prevScriptId) {
       try {
-        await chrome.debugger.sendCommand(debuggee(id), 'Page.removeScriptToEvaluateOnNewDocument', {
-          identifier: prevScriptId,
-        });
+        await cdpWithTimeout(id, 'Page.removeScriptToEvaluateOnNewDocument', { identifier: prevScriptId });
       } catch {}
     }
-    const source = fingerprintSpoofSource(profile);
-    const res = hasPage ? await chrome.debugger.sendCommand(debuggee(id), 'Page.addScriptToEvaluateOnNewDocument', {
-      source,
-    }) : null;
+    const source = spoofExpression || fingerprintSpoofSource(profile);
+    const res = hasPage ? await cdpWithTimeout(id, 'Page.addScriptToEvaluateOnNewDocument', { source }) : null;
     const scriptId = res?.identifier || null;
     try {
-      await chrome.debugger.sendCommand(debuggee(id), 'Runtime.evaluate', { expression: source });
-    } catch {}
+      await cdpWithTimeout(id, 'Runtime.evaluate', { expression: source });
+    } catch (err) {
+      if (String(err?.message || '').startsWith('timeout ')) throw err;
+    }
     onLog(`spoof.apply ${targetLabel(id)} tz=${profile.timezoneId} locale=${profile.spoofLanguage ? profile.locale : 'off'}`);
     return scriptId;
   } catch (err) {
@@ -1481,28 +1545,26 @@ async function applySpoof(id, prevScriptId, hasPage = true) {
 
 async function applyWebrtcBlock(id) {
   try {
-    await chrome.debugger.sendCommand(debuggee(id), 'Page.enable');
-    const prev = attachedTabs.get(id)?.webrtcScriptId;
+    await cdpWithTimeout(id, 'Page.enable');
+    const prev = attachedTabs.get(typeof id === 'object' ? id.tabId : id)?.webrtcScriptId;
     if (prev) {
       try {
-        await chrome.debugger.sendCommand(debuggee(id), 'Page.removeScriptToEvaluateOnNewDocument', {
-          identifier: prev,
-        });
+        await cdpWithTimeout(id, 'Page.removeScriptToEvaluateOnNewDocument', { identifier: prev });
       } catch {}
     }
     if (!blockWebrtc) {
       onLog(`webrtc.block off tab=${id}`);
       return null;
     }
-    const res = await chrome.debugger.sendCommand(debuggee(id), 'Page.addScriptToEvaluateOnNewDocument', {
+    const res = await cdpWithTimeout(id, 'Page.addScriptToEvaluateOnNewDocument', {
       source: WEBRTC_BLOCK_SOURCE,
     });
     const scriptId = res?.identifier || null;
     try {
-      await chrome.debugger.sendCommand(debuggee(id), 'Runtime.evaluate', {
-        expression: WEBRTC_BLOCK_SOURCE,
-      });
-    } catch {}
+      await cdpWithTimeout(id, 'Runtime.evaluate', { expression: WEBRTC_BLOCK_SOURCE });
+    } catch (err) {
+      if (String(err?.message || '').startsWith('timeout ')) throw err;
+    }
     onLog(`webrtc.block on tab=${id}`);
     return scriptId;
   } catch (err) {

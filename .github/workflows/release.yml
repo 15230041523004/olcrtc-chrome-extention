@@ -27,8 +27,4 @@ jobs:
           gh release delete "$GITHUB_REF_NAME" --yes || true
           gh release create "$GITHUB_REF_NAME" dist/*.zip \
             --title "olcRTC Research $GITHUB_REF_NAME" \
-            --notes "Packaged Chrome extension for this research prototype.
-
-          Unzip olcrtc-chrome-extension-*.zip and load the folder that contains manifest.json via chrome://extensions (Developer mode → Load unpacked).
-
-          This is experimental research software (PoC). It is not a VPN, not a public proxy, and not a circumvention tool."
+            --notes-file .github/release-notes.md
