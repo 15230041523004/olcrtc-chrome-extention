@@ -103,6 +103,7 @@ export class SmuxClient {
         }
       } else if (cmd === CMD_FIN && st) {
         st.eof = true;
+        st._closed = true;
         st.wake();
         this.streams.delete(sid);
       } else if (cmd === CMD_UPD && body.length === UPD_LEN && st) {
@@ -138,12 +139,20 @@ export class SmuxStream {
     this.headOffset = 0;
     this.bufferedBytes = 0;
     this.eof = false;
-    this.closed = false;
+    this._closed = false;
     this.waiters = [];
     this.numRead = 0;
     this.incr = 0;
     this.peerConsumed = 0;
     this.peerWindow = SMUX_STREAM_WINDOW;
+  }
+
+  get closed() {
+    return this._closed || this.eof;
+  }
+
+  set closed(val) {
+    this._closed = Boolean(val);
   }
 
   get buf() {

@@ -96,6 +96,10 @@ export function clearResponseCache() {
 
 const inflightRequests = new Map(); // key -> { promise, waiters }
 
+export function clearInflightRequests() {
+  inflightRequests.clear();
+}
+
 export const interceptStats = {
   cacheHits: 0,
   coalesceHits: 0,
@@ -821,6 +825,7 @@ export async function stopIntercept() {
   attaching.clear();
   reloadedAfterAttach.clear();
   pendingNavigations.clear();
+  clearInflightRequests();
   recoverChain = Promise.resolve();
   onLog('intercept.off all tabs detached');
   onTabCountChange(0);
@@ -1036,6 +1041,11 @@ export function getTelemetryMock(url) {
       (path.includes('/jot') || path.includes('client_event.json'))
     ) {
       return { code: 200, phrase: 'OK', body: '', contentType: 'application/json' };
+    }
+    // Gemini client-side JavaScript error reports can contain large diagnostic
+    // payloads and are never needed to render a response or generate content.
+    if (host === 'gemini.google.com' && path.endsWith('/jserror')) {
+      return { code: 204, phrase: 'No Content', body: '' };
     }
     // Walmart client performance & observability beacons
     if (
@@ -1500,7 +1510,8 @@ async function applySpoof(id, prevScriptId, hasPage = true) {
         hardwareConcurrency: profile.hardwareConcurrency,
       });
     }
-    if (hasPage) {
+    const isTopLevelTarget = typeof id !== 'object' || !id?.sessionId;
+    if (hasPage && isTopLevelTarget) {
       if (profile.spoofScreen && profile.screen) {
         await cdpTry(id, 'Emulation.setDeviceMetricsOverride', {
           width: profile.screen.width,
@@ -1513,6 +1524,8 @@ async function applySpoof(id, prevScriptId, hasPage = true) {
       } else {
         await cdpTry(id, 'Emulation.clearDeviceMetricsOverride');
       }
+    }
+    if (hasPage) {
       if (profile.spoofColorScheme && profile.spoofColorScheme !== 'off') {
         await cdpTry(id, 'Emulation.setEmulatedMedia', {
           features: [{ name: 'prefers-color-scheme', value: profile.spoofColorScheme }],

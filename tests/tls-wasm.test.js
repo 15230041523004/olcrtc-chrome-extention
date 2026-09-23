@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { TLS_APP_WRITE_CHUNK, writeTlsApplicationData } from '../extension/lib/tls.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import init, { WasmTlsClient } from '../extension/lib/vendor/tls-wasm/rust_tls_wasm.js';
@@ -23,3 +24,23 @@ test('rustls wasm loads and emits ClientHello with TLS 1.2 and 1.3', async () =>
   client.free();
 });
 
+test('large TLS application writes are drained in bounded chunks', () => {
+  const writes = [];
+  const network = [];
+  const client = {
+    write_app_data(data) {
+      assert.ok(data.length <= TLS_APP_WRITE_CHUNK);
+      writes.push(data.slice());
+    },
+    wants_write: () => network.length < writes.length,
+    extract_network_data: () => new Uint8Array([writes.length]),
+  };
+  const tcp = { write: (data) => network.push(data.slice()) };
+  const body = new Uint8Array(TLS_APP_WRITE_CHUNK * 19 + 123).fill(7);
+
+  writeTlsApplicationData(client, tcp, body);
+
+  assert.equal(writes.length, 20);
+  assert.equal(network.length, 20);
+  assert.equal(writes.reduce((sum, chunk) => sum + chunk.length, 0), body.length);
+});

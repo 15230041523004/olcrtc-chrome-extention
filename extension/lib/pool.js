@@ -2,7 +2,7 @@ import { CONFIG, getMaxBodyBytes } from './config.js';
 
 export const POOL_MAX_PER_HOST = CONFIG.poolMaxPerHost || 8;
 export const POOL_MAX_TOTAL = CONFIG.poolMaxTotal || 48;
-export const POOL_IDLE_MS = CONFIG.poolIdleMs || 45_000;
+export const POOL_IDLE_MS = CONFIG.poolIdleMs || 15_000;
 export const PROXY_INFLIGHT = 8;
 export const CONNECT_TIMEOUT_MS = 10_000;
 export const TLS_TIMEOUT_MS = 15_000;
@@ -37,7 +37,7 @@ export class BufferedStream {
   }
 
   get closed() {
-    return Boolean(this.inner?.closed);
+    return Boolean(this.inner?.closed || this.inner?.eof);
   }
 
   pushBack(u8) {

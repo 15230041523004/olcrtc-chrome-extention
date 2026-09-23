@@ -230,3 +230,13 @@ test('HostGate.run respects maxConcurrency override for throttled image download
   assert.deepEqual(events, ['p1-start', 'p1-end', 'p2-run']);
 });
 
+test('BufferedStream.closed reflects inner.closed and inner.eof', () => {
+  const inner = { closed: false, eof: false };
+  const s = new BufferedStream(inner);
+  assert.equal(s.closed, false);
+  inner.eof = true;
+  assert.equal(s.closed, true);
+  inner.eof = false;
+  inner.closed = true;
+  assert.equal(s.closed, true);
+});

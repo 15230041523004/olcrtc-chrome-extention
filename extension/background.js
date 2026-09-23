@@ -437,15 +437,19 @@ async function disconnect() {
   await guardReady.catch(() => {});
   await stopIntercept();
   state.flags.intercept = false;
+  let stopped = false;
   try {
-    await sendToOffscreen({ type: 'STOP' });
+    const res = await sendToOffscreen({ type: 'STOP' });
+    if (res?.ok) stopped = true;
   } catch {
     /* ignore */
   }
-  try {
-    await chrome.offscreen.closeDocument();
-  } catch {
-    /* ignore */
+  if (!stopped) {
+    try {
+      await chrome.offscreen.closeDocument();
+    } catch {
+      /* ignore */
+    }
   }
   await disableNetworkGuard();
   state.networkGuard = false;
@@ -522,6 +526,7 @@ function applyEvent(ev) {
       if (typeof ev.pingOk === 'boolean') state.flags.pingOk = ev.pingOk;
       if (typeof ev.tokenOk === 'boolean') state.flags.tokenOk = ev.tokenOk;
       if (ev.token) state.flags.token = ev.token;
+      maybeConnected();
       break;
     case 'tunnel.flags':
       if (typeof ev.handshakeOk === 'boolean') {
@@ -532,6 +537,7 @@ function applyEvent(ev) {
       }
       if (typeof ev.pingOk === 'boolean') state.flags.pingOk = ev.pingOk;
       if (typeof ev.tokenOk === 'boolean') state.flags.tokenOk = ev.tokenOk;
+      maybeConnected();
       break;
     case 'pc.failed':
       fail(`${ev.side} PC ${ev.state}`);
@@ -551,8 +557,9 @@ function applyEvent(ev) {
 }
 
 function maybeConnected() {
-  if (state.flags.subConnected && state.status === 'connecting') {
+  if (state.flags.subConnected && (state.status === 'connecting' || (state.status === 'error' && state.flags.handshakeOk))) {
     state.status = 'connected';
+    state.error = null;
   }
 }
 
@@ -758,8 +765,13 @@ function resetFlags() {
 async function ensureOffscreen() {
   const exists = await hasOffscreen();
   if (exists) {
-    const pong = await sendToOffscreen({ type: 'PING_OFFSCREEN' });
+    const pong = await sendToOffscreen({ type: 'PING_OFFSCREEN' }).catch(() => null);
     if (pong?.ok) return;
+    try {
+      await chrome.offscreen.closeDocument();
+    } catch {
+      /* ignore */
+    }
   }
   try {
     await chrome.offscreen.createDocument({

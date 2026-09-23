@@ -85,6 +85,7 @@ export class GoolomSession {
     this.appPingTimer = null;
     this.telemetryTimer = null;
     this.subConnected = defer();
+    this.subDisconnectTimer = null;
     this.remoteVideo = new MediaStream();
   }
 
@@ -98,12 +99,35 @@ export class GoolomSession {
       const s = this.sub.connectionState;
       this.log(`goolom subscriber state: ${s}`);
       if (s === 'connected') {
+        if (this.subDisconnectTimer) {
+          clearTimeout(this.subDisconnectTimer);
+          this.subDisconnectTimer = null;
+        }
         this.log('sub.connected');
         this.onEvent({ type: 'sub.connected' });
         this.subConnected.resolve();
-      }
-      if (s === 'failed' || s === 'disconnected') {
+      } else if (s === 'disconnected') {
+        if (!this.subDisconnectTimer) {
+          this.log('goolom subscriber disconnected — starting 10s grace timer');
+          this.subDisconnectTimer = setTimeout(() => {
+            this.subDisconnectTimer = null;
+            if (this.sub && this.sub.connectionState === 'disconnected') {
+              this.log('goolom subscriber disconnected grace period expired');
+              this.onEvent({ type: 'pc.failed', side: 'subscriber', state: 'disconnected' });
+            }
+          }, 10_000);
+        }
+      } else if (s === 'failed') {
+        if (this.subDisconnectTimer) {
+          clearTimeout(this.subDisconnectTimer);
+          this.subDisconnectTimer = null;
+        }
         this.onEvent({ type: 'pc.failed', side: 'subscriber', state: s });
+      } else {
+        if (this.subDisconnectTimer) {
+          clearTimeout(this.subDisconnectTimer);
+          this.subDisconnectTimer = null;
+        }
       }
     });
     this.pub.addEventListener('connectionstatechange', () => {
@@ -529,6 +553,10 @@ export class GoolomSession {
   async close() {
     if (this.closed) return;
     this.closed = true;
+    if (this.subDisconnectTimer) {
+      clearTimeout(this.subDisconnectTimer);
+      this.subDisconnectTimer = null;
+    }
     clearInterval(this.keepAliveTimer);
     clearInterval(this.appPingTimer);
     clearInterval(this.telemetryTimer);

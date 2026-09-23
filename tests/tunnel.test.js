@@ -278,6 +278,7 @@ test('isImageUrl correctly identifies SVG, AVIF, BMP and image CDNs (including w
   assert.equal(isImageUrl('/dfw/63fd9f59/wplus-icon.svg', 'i5.walmartimages.com'), true);
   assert.equal(isImageUrl('/seo/item.jpeg', 'i5.walmartimages.com'), true);
   assert.equal(isImageUrl('/vi/dQw4w9WgXcQ/default.jpg', 'i.ytimg.com'), true);
+  assert.equal(isImageUrl('/faviconV2?client=SOCIAL&type=FAVICON', 't2.gstatic.com'), true);
   assert.equal(isImageUrl('/photo.png', 'img.example.com'), true);
   assert.equal(isImageUrl('/avatar.webp', 'pic.rtbcdn.ru'), true);
 
@@ -366,5 +367,47 @@ test('httpProxy proactively triggers prewarmHost for media URLs when pool has no
   tunnel.stop();
 });
 
+test('httpProxyInner automatically retries idempotent requests on fresh socket and prunes host pool upon isStalePoolError', async () => {
+  const { tunnel, logs } = readyTunnel();
+  const key = 'example.com:80:tcp';
+  // Put a dummy socket in the pool that throws stale error
+  let dummyClosed = false;
+  tunnel.pool.put(key, {
+    closed: false,
+    write() {},
+    read: async () => { throw new Error('http: connection closed before headers'); },
+    close() { dummyClosed = true; },
+  });
+  assert.equal(tunnel.pool.count(key), 1);
+
+  let connects = 0;
+  tunnel.connectTCP = async () => {
+    connects++;
+    return {
+      closed: false,
+      read: async () => new TextEncoder().encode('HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n'),
+      write() {},
+      close() {},
+    };
+  };
+
+  const res = await tunnel.httpProxyInner(
+    { method: 'GET', url: 'http://example.com/test' },
+    {
+      parsed: new URL('http://example.com/test'),
+      https: false,
+      port: 80,
+      key,
+      isMedia: false,
+      inGate: true,
+    },
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(connects, 1, 'should connect fresh socket on retry');
+  assert.equal(dummyClosed, true, 'pooled sockets for key should have been closed/pruned');
+  assert.ok(logs.some((l) => l.includes('pool.retry')));
+  tunnel.stop();
+});
 
 

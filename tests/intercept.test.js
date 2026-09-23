@@ -319,6 +319,17 @@ test('child workers are intercepted and protected before resuming, with session 
   }
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.ok(debuggerCommands.some((c) => c.sessionId === 'worker-session' && c.method === 'Fetch.failRequest' && c.params.requestId === 'child-offline'));
+  debuggerCommands.length = 0;
+  for (const fn of debuggerListeners.event) {
+    fn({ tabId: 10 }, 'Target.attachedToTarget', {
+      sessionId: 'iframe-session', targetInfo: { type: 'iframe' }, waitingForDebugger: true,
+    });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const iframeCommands = debuggerCommands.filter((c) => c.sessionId === 'iframe-session');
+  assert.ok(iframeCommands.some((c) => c.method === 'Emulation.setGeolocationOverride'));
+  assert.ok(!iframeCommands.some((c) => c.method === 'Emulation.setDeviceMetricsOverride'));
+  assert.ok(!iframeCommands.some((c) => c.method === 'Emulation.clearDeviceMetricsOverride'));
   setHandshakeOk(true);
 });
 
@@ -373,6 +384,18 @@ test('fast telemetry fulfills VK/OK tracking endpoints locally with expected sta
     fn({ tabId: 10 }, 'Fetch.requestPaused', trackEvent);
   }
 
+  const geminiErrorEvent = {
+    requestId: 'req_gemini_jserror',
+    request: {
+      url: 'https://gemini.google.com/_/BardChatUi/jserror?script=app&error=render',
+      method: 'POST',
+      headers: { Origin: 'https://gemini.google.com' },
+    },
+  };
+  for (const fn of debuggerListeners.event) {
+    fn({ tabId: 10 }, 'Fetch.requestPaused', geminiErrorEvent);
+  }
+
   await new Promise((r) => setTimeout(r, 30));
 
   assert.equal(proxyCalled, false, 'Fast telemetry must not call proxyFn');
@@ -384,7 +407,10 @@ test('fast telemetry fulfills VK/OK tracking endpoints locally with expected sta
   assert.ok(trackFulfill, 'TrackPlayerEvents request must be fulfilled');
   assert.equal(trackFulfill.params.responseCode, 200);
   assert.equal(atob(trackFulfill.params.body), '{"response":1}');
-  assert.equal(getInterceptStats().telemetryBlocked, 2);
+  const geminiFulfill = debuggerCommands.find((c) => c.method === 'Fetch.fulfillRequest' && c.params.requestId === 'req_gemini_jserror');
+  assert.ok(geminiFulfill, 'Gemini JavaScript error report must be fulfilled locally');
+  assert.equal(geminiFulfill.params.responseCode, 204);
+  assert.equal(getInterceptStats().telemetryBlocked, 3);
 });
 
 test('in-flight request deduplication coalesces concurrent identical requests and shares the response', async () => {
@@ -1385,4 +1411,3 @@ test('Flow eligibility requests are neither shared nor replayed from the extensi
   assert.equal(debuggerCommands.filter((cmd) => cmd.method === 'Fetch.fulfillRequest' && cmd.params.requestId.startsWith('flow-check-')).length, 3);
   await stopIntercept();
 });
-

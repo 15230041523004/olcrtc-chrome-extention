@@ -34,6 +34,7 @@ import {
   HTTP_HEADER_TIMEOUT_MS,
 } from './pool.js';
 import { CONFIG } from './config.js';
+import { errorMessage } from './errors.js';
 
 const MAX_CONTROL_PACKETS = 2;
 const MAX_DATA_PACKETS = CONFIG.maxDataPackets || 128;
@@ -78,6 +79,8 @@ export class Tunnel {
     this.subSem = new Semaphore(CONFIG.subSemConcurrency || 48, (m) => this.log(`sub.${m}`));
     this.hostGate = new HostGate(CONFIG.hostGateConcurrency || 8);
     this.imageGate = new HostGate(CONFIG.imageGateConcurrency || 6);
+    this.warmHosts = new Set();
+    this.prewarmingKeys = new Set();
   }
 
   async start(cfg) {
@@ -651,6 +654,7 @@ export class Tunnel {
       fromPool = false,
       forceFresh = false,
       inGate = false,
+      retried = false,
     },
   ) {
     const path = `${parsed.pathname || '/'}${parsed.search || ''}`;
@@ -746,20 +750,30 @@ export class Tunnel {
       }
       return out;
     } catch (err) {
-      if (fromPool && isStalePoolError(err)) {
+      if (isStalePoolError(err)) {
         stream?.close();
         stream = null;
+        const staleList = this.pool?.idle?.get(key);
+        if (staleList?.length) {
+          this.pool.idle.delete(key);
+          for (const item of staleList) item.stream?.close?.();
+          this.log(`pool.dropAll ${key} (pruned ${staleList.length} idle connections after socket failure)`);
+        }
         if (!inGate) {
           throw err;
         }
-        this.log(`pool.retry ${key} (stale pooled connection died: ${err.message}, retrying fresh)`);
-        return await this.httpProxyInner(
-          { method, url, headers, body },
-          { parsed, https, port, key, isMedia, forceFresh: true, inGate: true },
-        );
+        const isIdempotent = !method || method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+        if (!retried && (fromPool || isIdempotent)) {
+          this.log(`pool.retry ${key} (${fromPool ? 'stale pooled' : 'broken'} connection died: ${err.message}, retrying fresh)`);
+          return await this.httpProxyInner(
+            { method, url, headers, body },
+            { parsed, https, port, key, isMedia, forceFresh: true, inGate: true, retried: true },
+          );
+        }
       }
-      this.log(`http.proxy error ${method || 'GET'} ${url} — ${err.message}`);
-      throw err;
+      const message = errorMessage(err, 'HTTP proxy failed');
+      this.log(`http.proxy error ${method || 'GET'} ${url} — ${message}`);
+      throw err instanceof Error ? err : new Error(message);
     } finally {
       stream?.close();
     }
@@ -830,11 +844,14 @@ class Mux {
 }
 
 function isStalePoolError(err) {
-  const msg = String(err?.message || err);
+  const msg = String(err?.message || err).toLowerCase();
   return (
     msg.includes('connection closed before headers') ||
     msg.includes('eof during handshake') ||
-    msg.includes('tls: eof')
+    msg.includes('tls: eof') ||
+    msg.includes('smux: eof') ||
+    msg.includes('connection reset') ||
+    msg.includes('econnreset')
   );
 }
 
@@ -930,7 +947,7 @@ export function isImageUrl(pathname = '', hostname = '') {
     h.startsWith('images.') ||
     h.startsWith('img.') ||
     h.includes('walmartimages.com') ||
-    h.includes('ytimg.com')
+    h.includes('ytimg.com') ||
+    (h.endsWith('gstatic.com') && p.includes('/favicon'))
   );
 }
-

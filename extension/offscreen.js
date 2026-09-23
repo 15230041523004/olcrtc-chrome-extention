@@ -1,6 +1,7 @@
 import { issueTelemostConnection, wsHost } from './lib/telemost-auth.js';
 import { GoolomSession } from './lib/goolom.js';
 import { monitorPublisher } from './lib/publisher-monitor.js';
+import { errorMessage } from './lib/errors.js';
 
 let session = null;
 let dummyTimer = null;
@@ -51,7 +52,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'HTTP_PROXY') {
     void proxyHttp(msg)
       .then((res) => sendResponse(res))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
+      .catch((err) => sendResponse({ ok: false, error: errorMessage(err, 'HTTP proxy failed') }));
     return true;
   }
 });

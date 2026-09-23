@@ -28,7 +28,7 @@ test('config maxBodyBytes defaults to 32 MiB and can be updated', () => {
 test('config has increased concurrency and pool defaults', () => {
   assert.equal(DEFAULT_CONFIG.poolMaxTotal, 240);
   assert.equal(DEFAULT_CONFIG.poolMaxPerHost, 32);
-  assert.equal(DEFAULT_CONFIG.poolIdleMs, 180_000);
+  assert.equal(DEFAULT_CONFIG.poolIdleMs, 15_000);
   assert.equal(DEFAULT_CONFIG.imageGateConcurrency, 6);
   assert.equal(DEFAULT_CONFIG.hostGateConcurrency, 6);
   assert.equal(DEFAULT_CONFIG.subSemConcurrency, 64);
@@ -46,7 +46,7 @@ test('config has increased concurrency and pool defaults', () => {
   const pool = new ConnPool();
   assert.equal(pool.maxTotal, 240);
   assert.equal(pool.maxPerHost, 32);
-  assert.equal(pool.idleMs, 180_000);
+  assert.equal(pool.idleMs, 15_000);
 });
 
 test('isTelemetryUrl identifies tracking endpoints while leaving video and assets untouched', () => {

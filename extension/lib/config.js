@@ -11,8 +11,8 @@ export const DEFAULT_CONFIG = {
   poolMaxTotal: 240,
   /** Maximum idle keep-alive connections in the connection pool per host. */
   poolMaxPerHost: 32,
-  /** Idle connection keep-alive timeout in milliseconds (3 minutes). */
-  poolIdleMs: 180_000,
+  /** Idle connection keep-alive timeout in milliseconds (15 seconds). */
+  poolIdleMs: 15_000,
   /** Concurrent request limit for image hosts (matches Chrome MAX_SOCKETS_PER_GROUP = 6). */
   imageGateConcurrency: 6,
   /** Concurrent request limit per host (matches Chrome MAX_SOCKETS_PER_GROUP = 6 to prevent TLS handshake storms and maximize keep-alive reuse). */

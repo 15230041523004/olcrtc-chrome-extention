@@ -1,5 +1,6 @@
 import { keepaliveBuffer, hexPrefix } from './lib/vp8-wire.js';
 import { Tunnel } from './lib/tunnel.js';
+import { errorMessage } from './lib/errors.js';
 
 let mode = 'identity';
 let verboseLogs = false;
@@ -107,8 +108,9 @@ async function runHttpProxy(msg) {
       bodyLength: res.body?.length || 0,
     });
   } catch (err) {
-    log(`http.proxy error ${err.message}`);
-    self.postMessage({ type: 'httpResult', id, ok: false, error: err.message });
+    const message = errorMessage(err, 'HTTP proxy failed');
+    log(`http.proxy error ${message}`);
+    self.postMessage({ type: 'httpResult', id, ok: false, error: message });
   }
 }
 

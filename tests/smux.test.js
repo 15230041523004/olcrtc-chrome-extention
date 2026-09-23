@@ -97,6 +97,7 @@ test('inbound CMD_FIN sets EOF, wakes readers and removes stream from map', asyn
   assert.equal(readDone, true);
   assert.equal(readResult.length, 0);
   assert.equal(s.eof, true);
+  assert.equal(s.closed, true);
   assert.equal(client.streams.has(3), false);
 });
 

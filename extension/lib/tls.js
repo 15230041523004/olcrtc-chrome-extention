@@ -1,5 +1,11 @@
 import init, { WasmTlsClient } from './vendor/tls-wasm/rust_tls_wasm.js';
 import { concatBytes } from './pool.js';
+import { errorMessage } from './errors.js';
+
+// Rustls limits how much plaintext can wait in its internal buffer. Drain one
+// TLS record at a time so large POST bodies cannot make write_all fail before
+// extract_network_data gets a chance to run.
+export const TLS_APP_WRITE_CHUNK = 16 * 1024;
 
 let wasmReady;
 
@@ -35,6 +41,14 @@ function flushOut(client, tcp) {
   }
 }
 
+export function writeTlsApplicationData(client, tcp, input) {
+  const data = input instanceof Uint8Array ? input : new Uint8Array(input);
+  for (let offset = 0; offset < data.length; offset += TLS_APP_WRITE_CHUNK) {
+    client.write_app_data(data.subarray(offset, offset + TLS_APP_WRITE_CHUNK));
+    flushOut(client, tcp);
+  }
+}
+
 /**
  * TLS 1.2/1.3 client (Rustls WASM + Mozilla CA). Fail-closed on unknown issuer.
  * Duplex matches smux: { read, write, close }.
@@ -60,7 +74,7 @@ export async function wrapTls(tcp, { sni, log }) {
       flushOut(client, tcp);
     }
   } catch (err) {
-    const msg = err?.message || String(err);
+    const msg = errorMessage(err, 'TLS handshake failed');
     log(`tls.error ${msg}`);
     try {
       client.free();
@@ -100,11 +114,7 @@ export async function wrapTls(tcp, { sni, log }) {
       return closed;
     },
     write(u8) {
-      const data = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
-      client.write_app_data(data);
-      const net = client.extract_network_data();
-      if (net?.length) tcp.write(net);
-      flushOut(client, tcp);
+      writeTlsApplicationData(client, tcp, u8);
     },
     async read(n) {
       while (!plain.length && !closed) {
