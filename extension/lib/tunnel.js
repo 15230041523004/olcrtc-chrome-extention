@@ -512,7 +512,7 @@ export class Tunnel {
     const payload = encodeTunnelConnect(host, port);
     this.log(`socks.connect ${host}:${port} sid=${stream.sid}`);
     try {
-      stream.write(payload);
+      await stream.write(payload);
       const ack = await withTimeout(
         stream.readFull(1),
         CONNECT_TIMEOUT_MS,
@@ -693,7 +693,7 @@ export class Tunnel {
         connection,
       });
       this.log(`http.write ${method || 'GET'} ${url} n=${wire.length} conn=${connection}`);
-      stream.write(wire);
+      await stream.write(wire);
       const res = await readHttpResponse(stream, {
         method: method || 'GET',
         headerTimeoutMs: HTTP_HEADER_TIMEOUT_MS,

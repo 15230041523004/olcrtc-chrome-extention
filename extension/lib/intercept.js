@@ -1218,9 +1218,16 @@ async function handlePaused(source, params) {
 
     let got = { body: null, src: 'none' };
     if (method !== 'GET' && method !== 'HEAD') {
+      const netId = params.networkId || params.requestId;
       got = await resolveCdpPostBody(req, {
         max: getMaxBodyBytes(),
-        getPostData: () => chrome.debugger.sendCommand(source, 'Fetch.getRequestPostData', { requestId }),
+        getPostData: () =>
+          chrome.debugger.sendCommand(source, 'Network.getRequestPostData', { requestId: netId }).catch((err) => {
+            if (params.networkId && params.requestId && params.networkId !== params.requestId) {
+              return chrome.debugger.sendCommand(source, 'Network.getRequestPostData', { requestId: params.requestId });
+            }
+            throw err;
+          }),
       });
       if (got.error) onLog(`http.post miss ${got.error.message}`);
       onLog(`http.post n=${got.body?.length || 0} src=${got.src}`);

@@ -11,7 +11,7 @@ export function b64ToBytes(b64) {
   return latin1ToBytes(atob(b64));
 }
 
-export function decodeCdpPostData({ postData, postDataEntries } = {}) {
+export function decodeCdpPostData({ postData, postDataEntries, base64Encoded } = {}) {
   if (Array.isArray(postDataEntries) && postDataEntries.length) {
     const parts = [];
     let total = 0;
@@ -32,6 +32,9 @@ export function decodeCdpPostData({ postData, postDataEntries } = {}) {
     }
   }
   if (typeof postData === 'string' && postData.length) {
+    if (base64Encoded) {
+      return { body: b64ToBytes(postData), src: 'b64' };
+    }
     return { body: latin1ToBytes(postData), src: 'paused' };
   }
   return { body: null, src: 'none' };
@@ -45,6 +48,7 @@ export async function resolveCdpPostBody(req, { getPostData, max } = {}) {
       const decoded = decodeCdpPostData({
         postData: got?.postData,
         postDataEntries: got?.postDataEntries,
+        base64Encoded: got?.base64Encoded,
       });
       if (decoded.body) {
         body = decoded.body;

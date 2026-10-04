@@ -37,16 +37,30 @@ function feedNetwork(client, chunk) {
 function flushOut(client, tcp) {
   while (client.wants_write()) {
     const net = client.extract_network_data();
-    if (net?.length) tcp.write(net);
+    if (net?.length) {
+      const p = tcp.write(net);
+      if (p && typeof p.then === 'function') {
+        return p.then(() => flushOut(client, tcp));
+      }
+    }
   }
 }
 
 export function writeTlsApplicationData(client, tcp, input) {
   const data = input instanceof Uint8Array ? input : new Uint8Array(input);
-  for (let offset = 0; offset < data.length; offset += TLS_APP_WRITE_CHUNK) {
-    client.write_app_data(data.subarray(offset, offset + TLS_APP_WRITE_CHUNK));
-    flushOut(client, tcp);
+  let offset = 0;
+  function pumpChunk() {
+    while (offset < data.length) {
+      const chunk = data.subarray(offset, offset + TLS_APP_WRITE_CHUNK);
+      offset += TLS_APP_WRITE_CHUNK;
+      client.write_app_data(chunk);
+      const flushed = flushOut(client, tcp);
+      if (flushed && typeof flushed.then === 'function') {
+        return flushed.then(pumpChunk);
+      }
+    }
   }
+  return pumpChunk();
 }
 
 /**
@@ -65,13 +79,15 @@ export async function wrapTls(tcp, { sni, log }) {
   };
 
   try {
-    flushOut(client, tcp);
+    const initFlush = flushOut(client, tcp);
+    if (initFlush && typeof initFlush.then === 'function') await initFlush;
     while (client.is_handshaking()) {
       const chunk = await tcp.read(4096);
       if (!chunk.length) throw new Error('tls: eof during handshake');
       const app = feedNetwork(client, chunk);
       if (app.length) plain = concatBytes(plain, app);
-      flushOut(client, tcp);
+      const flushed = flushOut(client, tcp);
+      if (flushed && typeof flushed.then === 'function') await flushed;
     }
   } catch (err) {
     const msg = errorMessage(err, 'TLS handshake failed');
@@ -99,7 +115,8 @@ export async function wrapTls(tcp, { sni, log }) {
           plain = concatBytes(plain, app);
           wake();
         }
-        flushOut(client, tcp);
+        const flushed = flushOut(client, tcp);
+        if (flushed && typeof flushed.then === 'function') await flushed;
       }
     } catch (err) {
       log(`tls.pump ${err.message}`);
@@ -114,7 +131,7 @@ export async function wrapTls(tcp, { sni, log }) {
       return closed;
     },
     write(u8) {
-      writeTlsApplicationData(client, tcp, u8);
+      return writeTlsApplicationData(client, tcp, u8);
     },
     async read(n) {
       while (!plain.length && !closed) {
@@ -129,7 +146,8 @@ export async function wrapTls(tcp, { sni, log }) {
     close() {
       try {
         if (typeof client.close === 'function') client.close();
-        flushOut(client, tcp);
+        const f = flushOut(client, tcp);
+        if (f && typeof f.catch === 'function') f.catch(() => {});
       } catch {
         /* ignore */
       }

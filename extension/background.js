@@ -376,6 +376,7 @@ async function lookupAndApplyExitGeo(generation) {
   try {
     // Each provider has its own timeout; do not cut the second attempt short.
     const geo = await resolveExitGeo((req) => sendToOffscreen({ type: 'HTTP_PROXY', ...req }), {
+      timeoutMs: 12_000,
       onAttempt: (attempt) => {
         if (generation !== connectionGeneration) return;
         state.exitGeoLookup.attempts.push(attempt);

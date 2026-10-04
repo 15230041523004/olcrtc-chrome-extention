@@ -174,4 +174,59 @@ test('inbound CMD_UPD updates peerConsumed and peerWindow on stream', () => {
   assert.equal(s.peerWindow, 1048576);
 });
 
+test('SmuxStream.write blocks when inflight exceeds peerWindow and resumes on CMD_UPD', async () => {
+  const conn = mockConn();
+  const client = new SmuxClient(conn);
+  const s = client.openStream(); // sid = 3, peerWindow = 256 KB
+
+  // Write 256 KB exactly (reaches initial peerWindow)
+  const chunk256 = new Uint8Array(256 * 1024);
+  await s.write(chunk256);
+  assert.equal(s.numWritten, 256 * 1024);
+
+  // Attempt to write another 64 KB; this must block because available window is 0
+  let writeFinished = false;
+  const p = s.write(new Uint8Array(64 * 1024)).then(() => {
+    writeFinished = true;
+  });
+
+  await new Promise((r) => setTimeout(r, 25));
+  assert.equal(writeFinished, false, 'write must block until window update is received');
+
+  // Peer sends CMD_UPD indicating 128 KB consumed
+  const updFrame = new Uint8Array(8 + 8);
+  updFrame[0] = 2; // version
+  updFrame[1] = 4; // CMD_UPD
+  new DataView(updFrame.buffer).setUint16(2, 8, true);
+  new DataView(updFrame.buffer).setUint32(4, 3, true);
+  new DataView(updFrame.buffer).setUint32(8, 128 * 1024, true); // peer consumed 128 KB
+  new DataView(updFrame.buffer).setUint32(12, 256 * 1024, true); // peer window 256 KB
+  conn.onData(updFrame);
+
+  await p;
+  assert.equal(writeFinished, true, 'write must resolve once peer consumed opens window');
+  assert.equal(s.numWritten, (256 + 64) * 1024);
+});
+
+test('SmuxStream.write rejects when stream is closed while waiting for window update', async () => {
+  const conn = mockConn();
+  const client = new SmuxClient(conn);
+  const s = client.openStream();
+
+  await s.write(new Uint8Array(256 * 1024));
+
+  let errorCaught = null;
+  const p = s.write(new Uint8Array(1024)).catch((err) => {
+    errorCaught = err;
+  });
+
+  await new Promise((r) => setTimeout(r, 25));
+  assert.equal(errorCaught, null);
+
+  s.close();
+  await p;
+  assert.ok(errorCaught);
+  assert.match(errorCaught.message, /closed/);
+});
+
 

@@ -58,3 +58,22 @@ test('latin1ToBytes caps via resolveCdpPostBody max', async () => {
   assert.deepEqual(body, new Uint8Array([1, 2, 3]));
   assert.deepEqual(latin1ToBytes(postData), new Uint8Array([1, 2, 3, 4, 5]));
 });
+
+test('decodeCdpPostData decodes base64Encoded string correctly', () => {
+  const raw = new Uint8Array([10, 20, 30, 40, 50]);
+  const b64 = Buffer.from(raw).toString('base64');
+  const { body, src } = decodeCdpPostData({ postData: b64, base64Encoded: true });
+  assert.equal(src, 'b64');
+  assert.deepEqual(body, raw);
+});
+
+test('resolveCdpPostBody handles getPostData returning base64Encoded payload', async () => {
+  const raw = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+  const b64 = Buffer.from(raw).toString('base64');
+  const { body, src } = await resolveCdpPostBody(
+    { hasPostData: true },
+    { getPostData: async () => ({ postData: b64, base64Encoded: true }) },
+  );
+  assert.equal(src, 'get');
+  assert.deepEqual(body, raw);
+});

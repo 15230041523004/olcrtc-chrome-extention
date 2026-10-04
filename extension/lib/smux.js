@@ -14,6 +14,7 @@ const VERSION = 2;
 const MAX_FRAME = 32 * 1024;
 export const SMUX_STREAM_WINDOW = 4 * 1024 * 1024; // 4 MiB stream receive window for unthrottled throughput
 export const SMUX_UPD_THRESHOLD = 256 * 1024; // 256 KiB increment threshold for window updates
+export const SMUX_INITIAL_PEER_WINDOW = 256 * 1024; // 256 KiB initial peer window (xtaci/smux default)
 
 function hdr(ver, cmd, sid, len) {
   const b = new Uint8Array(HDR);
@@ -105,12 +106,14 @@ export class SmuxClient {
         st.eof = true;
         st._closed = true;
         st.wake();
+        st.wakeWindow();
         this.streams.delete(sid);
       } else if (cmd === CMD_UPD && body.length === UPD_LEN && st) {
         /* peer window update */
         const uv = new DataView(body.buffer, body.byteOffset, body.byteLength);
         st.peerConsumed = uv.getUint32(0, true);
         st.peerWindow = uv.getUint32(4, true);
+        st.wakeWindow();
       }
     }
     if (offset > 0) {
@@ -143,8 +146,10 @@ export class SmuxStream {
     this.waiters = [];
     this.numRead = 0;
     this.incr = 0;
+    this.numWritten = 0;
     this.peerConsumed = 0;
-    this.peerWindow = SMUX_STREAM_WINDOW;
+    this.peerWindow = SMUX_INITIAL_PEER_WINDOW;
+    this.windowWaiters = [];
   }
 
   get closed() {
@@ -186,14 +191,40 @@ export class SmuxStream {
     for (const fn of w) fn();
   }
 
+  wakeWindow() {
+    const w = this.windowWaiters.splice(0);
+    for (const fn of w) fn();
+  }
+
   write(data) {
     if (this.closed) throw new Error(`smux: stream ${this.sid} closed`);
+    return this._writeInternal(data);
+  }
+
+  async _writeInternal(data) {
     const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
     let off = 0;
     while (off < u8.length) {
-      const n = Math.min(MAX_FRAME, u8.length - off);
+      if (this.closed) throw new Error(`smux: stream ${this.sid} closed`);
+
+      const inflight = (this.numWritten - this.peerConsumed) >>> 0;
+      let win = this.peerWindow - inflight;
+
+      while (win <= 0) {
+        if (this.closed) throw new Error(`smux: stream ${this.sid} closed`);
+        await new Promise((resolve) => this.windowWaiters.push(resolve));
+        const curInflight = (this.numWritten - this.peerConsumed) >>> 0;
+        win = this.peerWindow - curInflight;
+      }
+
+      const n = Math.min(MAX_FRAME, Math.min(win, u8.length - off));
       this.sess.writeFrame(CMD_PSH, this.sid, u8.subarray(off, off + n));
+      this.numWritten = (this.numWritten + n) >>> 0;
       off += n;
+
+      if (off < u8.length && (off % (64 * 1024) === 0)) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
     }
     return u8.length;
   }
@@ -254,6 +285,7 @@ export class SmuxStream {
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.wakeWindow();
     if (this.incr > 0) {
       try {
         this.sess.writeFrame(CMD_UPD, this.sid, updBody(this.numRead, 512 * 1024));

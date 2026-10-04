@@ -84,7 +84,7 @@ export function proxyResToText(res) {
  * @returns {Promise<ReturnType<typeof parseExitGeoBody>>}
  */
 export async function resolveExitGeo(proxyFn, opts = {}) {
-  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 5_000;
+  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 12_000;
   const urls = Array.isArray(opts.urls) && opts.urls.length ? opts.urls : EXIT_GEO_URLS;
   if (typeof proxyFn !== 'function') return null;
 

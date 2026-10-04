@@ -46,7 +46,7 @@ export class BufferedStream {
   }
 
   write(u8) {
-    this.inner.write(u8);
+    return this.inner.write(u8);
   }
 
   async read(n) {
