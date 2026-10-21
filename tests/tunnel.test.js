@@ -171,7 +171,7 @@ test('isMediaUrl strictly excludes static assets and telemetry while identifying
   assert.equal(isMediaUrl('https://rr1---sn-ax816n-aixe.googlevideo.com/videoplayback?expire=123'), true);
   assert.equal(isMediaUrl('https://vkvd.net/video/route/stream.m3u8'), true);
   assert.equal(isMediaUrl('https://st1-25.vkvideo.ru/video/fragment-1.m4s'), true);
-  assert.equal(isMediaUrl('https://vk6-4.vkuser.net/?expires=1789926792488&srcIp=23.95.170.162&bytes=13977-1107570'), true);
+  assert.equal(isMediaUrl('https://vk6-4.vkuser.net/?expires=1789926792488&srcIp=198.51.100.1&bytes=13977-1107570'), true);
   assert.equal(isMediaUrl('https://iv.okcdn.ru/videoPreview?id=20015769455233&type=42'), true);
   assert.equal(isMediaUrl('https://example.com/stream-chunk', null, { range: 'bytes=0-1000' }), true);
 });

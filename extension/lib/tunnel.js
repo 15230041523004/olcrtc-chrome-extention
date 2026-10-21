@@ -19,6 +19,7 @@ import { clientHandshake, sendPing, sendPong, readControl, PING, PONG } from './
 import { buildHttpRequest, readHttpResponse, prepareFulfill, HTTP_BODY_IDLE_MS } from './http-client.js';
 import { encodeTunnelConnect, CONNECT_ACK_OK } from './socks.js';
 import { wrapTls } from './tls.js';
+import { http2Request, isH2RequiredHost } from './http2-client.js';
 import {
   BufferedStream,
   ConnPool,

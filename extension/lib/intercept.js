@@ -13,7 +13,7 @@ import {
 
 const PROTOCOL = '1.3';
 /** example.com is HSTS-preloaded; http:// always upgrades to https. */
-export const HTTP_TEST_URL = 'http://neverssl.com/';
+export const HTTP_TEST_URL = 'http://httpbin.org/get';
 
 const attachedTabs = new Map(); // tabId -> { url: string, webrtcScriptId: string | null, spoofScriptId: string | null }
 const attaching = new Map(); // tabId -> Promise<boolean>

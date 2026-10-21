@@ -67,9 +67,9 @@ export function writeTlsApplicationData(client, tcp, input) {
  * TLS 1.2/1.3 client (Rustls WASM + Mozilla CA). Fail-closed on unknown issuer.
  * Duplex matches smux: { read, write, close }.
  */
-export async function wrapTls(tcp, { sni, log }) {
+export async function wrapTls(tcp, { sni, log, alpn = 'http/1.1' }) {
   await ensureWasm();
-  const client = new WasmTlsClient(sni, 'http/1.1');
+  const client = new WasmTlsClient(sni, alpn);
   let closed = false;
   let plain = new Uint8Array(0);
   const waiters = [];
@@ -102,8 +102,8 @@ export async function wrapTls(tcp, { sni, log }) {
 
   const ver =
     typeof client.protocol_version === 'function' ? client.protocol_version() : 'TLS1.3';
-  const alpn = client.negotiatedAlpn?.() || 'http/1.1';
-  log(`tls.ok sni=${sni} ver=${ver} ca=ok alpn=${alpn}`);
+  const negotiatedAlpnStr = client.negotiatedAlpn?.() || alpn;
+  log(`tls.ok sni=${sni} ver=${ver} ca=ok alpn=${negotiatedAlpnStr}`);
 
   const pump = async () => {
     try {
@@ -126,9 +126,13 @@ export async function wrapTls(tcp, { sni, log }) {
   };
   void pump();
 
+  const negotiatedAlpn = negotiatedAlpnStr;
   return {
     get closed() {
       return closed;
+    },
+    get negotiatedAlpn() {
+      return negotiatedAlpn;
     },
     write(u8) {
       return writeTlsApplicationData(client, tcp, u8);

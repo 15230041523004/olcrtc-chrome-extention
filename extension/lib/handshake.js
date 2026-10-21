@@ -13,7 +13,7 @@ function writeFrame(stream, obj) {
   const buf = new Uint8Array(4 + json.length);
   new DataView(buf.buffer).setUint32(0, json.length);
   buf.set(json, 4);
-  stream.write(buf);
+  return stream.write(buf);
 }
 
 async function readFrame(stream, max = 64 * 1024) {
@@ -30,7 +30,8 @@ function randomChallenge() {
 
 export async function clientHandshake(stream, deviceId) {
   const challenge = randomChallenge();
-  writeFrame(stream, {
+  await writeFrame(stream, {
+
     version: PROTO,
     type: HELLO,
     device_id: deviceId,

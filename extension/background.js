@@ -42,8 +42,8 @@ configureIntercept({
   },
 });
 
-const LOG_CAP = 400;
-const EVENT_CAP = 300;
+const LOG_CAP = 4000;
+const EVENT_CAP = 3000;
 const EVENT_RE = /intercept|fetch\.|socks\.|http\.proxy|http[.\s]|youtube\.|handshake|dataSmux|tls\.|error |auth\.ok|connect |pool\.|webrtc\.|proxy\.inflight|geo\.|spoof\.|cookie\.strip/i;
 const ALARM = 'olc-keepalive';
 let lifecycleOperation = Promise.resolve();
